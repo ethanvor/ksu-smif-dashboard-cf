@@ -76,7 +76,7 @@
         <div class="seg" id="perfRange"><button data-v="1M">1M</button><button data-v="3M">3M</button><button data-v="6M">6M</button><button data-v="YTD">YTD</button><button data-v="1Y" class="on">1Y</button><button data-v="3Y">3Y</button><button data-v="5Y">5Y</button><button data-v="10Y">10Y</button></div></div>
       <div class="row" style="justify-content:space-between;margin:-4px 0 6px">
         <div class="row" id="perfStats" style="gap:22px;font-size:13px;color:var(--ink-2)"></div>
-        <div class="seg" id="perfBasis"><button data-v="held" class="on" title="Each stock counts only from the date we bought it">As actually held</button><button data-v="today" title="Today's holdings and weights applied to the whole period">Today's weights</button></div>
+        <label class="switch" id="tradeToggleWrap" title="Show dashed lines on days we bought or sold"><input type="checkbox" id="tradeToggle" /><span class="track"><i></i></span>Show trades</label>
       </div>
       <div id="chPerf" class="chart"></div>
       <div class="hint" id="perfHint" style="color:var(--muted);font-size:12px;margin-top:6px"></div>
@@ -205,7 +205,7 @@
       <div class="sub">Look up any stock, then add a mock buy or sell. You'll see exactly how it would change our weights, sector tilt, cash and risk — nothing touches the real portfolio.</div>
     </div>
   </div>
-  <div class="card glow">
+  <div class="card glow search-card">
     <div class="row">
       <div class="search-box">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -304,8 +304,6 @@
       <div class="grid g-2" style="gap:12px">
         <label class="field">Your name (shown on changes)<input class="input" id="setName" placeholder="e.g. Jane Doe" /></label>
         <label class="field">Admin passcode<input class="input" id="setKey" type="password" placeholder="Officers only" /></label>
-        <label class="field">Max single position (%)<input class="input" id="setMaxPos" type="number" step="0.5" /></label>
-        <label class="field">Sector tolerance vs S&amp;P (± pts)<input class="input" id="setBand" type="number" step="0.5" /></label>
       </div>
       <div class="row mt"><button class="btn sm" id="checkKey">Test passcode</button><button class="btn sm" id="resetLocal">Forget my local copy</button></div>
     </div>

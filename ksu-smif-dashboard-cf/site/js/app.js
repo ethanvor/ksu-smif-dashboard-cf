@@ -31,9 +31,10 @@ const S = {
   rf: store.get('rf', null),
   rfAutoSaved: store.get('rfAuto', null),
   rfAuto: null,
-  settings: { maxPos: 10, band: 5, name: '', ...store.get('settings', {}) },
+  settings: { name: '', ...store.get('settings', {}), maxPos: 10, band: 5 }, // trade guidelines: 10% max position, ±5 pts sector band
   view: 'overview',
-  tmColor: 'ret', secBasis: 'equity', perfMode: 'ret', perfRange: store.get('perfRange', '1Y'), perfBasis: store.get('perfBasis', 'held'), // 'held' = actual results from transaction history
+  tmColor: 'ret', secBasis: 'equity', perfMode: 'ret', perfRange: store.get('perfRange', '1Y'), perfBasis: 'held', // actual results from the transaction history
+  showTrades: store.get('showTrades', false),
   long: {}, longLoaded: false, longLoading: null,
   trades: [],
   stock: null,         // screener current stock
@@ -360,9 +361,9 @@ async function renderPerfChart() {
   if (!S.live || !S.market.SPY) return renderSnapshotPerf();
   const r = S.perfRange;
   $('#perfRange').style.display = '';
-  $('#perfBasis').style.display = '';
+  $('#tradeToggleWrap').style.display = S.hist ? '' : 'none';
+  $('#tradeToggle').checked = S.showTrades;
   $$('#perfRange button').forEach((b) => b.classList.toggle('on', b.dataset.v === r));
-  $$('#perfBasis button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.perfBasis));
   const long = r === '3Y' || r === '5Y' || r === '10Y';
   if (long && !S.longLoaded) {
     $('#perfStats').innerHTML = '<span>Loading 10 years of weekly prices…</span>';
@@ -374,7 +375,7 @@ async function renderPerfChart() {
   const start = rangeStart(r);
   if (asHeld && S.hist) {
     await loadFormerHoldings(start, long);
-    if (S.perfRange !== r || S.view !== 'overview' || S.perfBasis !== 'held') return;
+    if (S.perfRange !== r || S.view !== 'overview') return;
   }
   const mkt = long ? S.long : S.market;
   const bt = asHeld
@@ -425,7 +426,7 @@ async function renderPerfChart() {
         const d = p[0].axisValue;
         let h = `<b>${d}</b><br>` + p.map((x) => `${x.marker} ${x.seriesName}: ${fmt.spct(x.value / 100 - 1)}`).join('<br>');
         if (bt.actual) { const i = bt.dates.indexOf(d); if (i >= 0) h += `<br><span style="color:#8e8a82">Fund value: ${fmt.usd(bt.values[i])}</span>`; }
-        const m = marks.find((x) => x.xAxis === d);
+        const m = S.showTrades && marks.find((x) => x.xAxis === d);
         if (m) {
           const list = (a) => (a.length > 6 ? a.slice(0, 6).join(', ') + ` +${a.length - 6} more` : a.join(', '));
           if (m.info.buys.length) h += `<br><span style="color:#3ccf7f">Bought: ${list(m.info.buys)}</span>`;
@@ -441,7 +442,7 @@ async function renderPerfChart() {
       { name: bt.actual ? 'SMIF (actual)' : 'SMIF', type: 'line', data: bt.smif, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold },
         areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(255,198,41,0.25)' }, { offset: 1, color: 'rgba(255,198,41,0)' }]) },
         endLabel: { show: true, color: C.ink, formatter: (p) => `SMIF ${fmt.spct(p.value / 100 - 1)}` },
-        markLine: marks.length ? { silent: true, symbol: 'none', lineStyle: { color: 'rgba(255,198,41,0.28)', type: 'dashed', width: 1 }, data: marks } : undefined },
+        markLine: marks.length && S.showTrades ? { silent: true, symbol: 'none', lineStyle: { color: 'rgba(255,198,41,0.28)', type: 'dashed', width: 1 }, data: marks } : undefined },
       { name: 'S&P 500 (SPY)', type: 'line', data: bt.bench, showSymbol: false, lineStyle: { width: 2, color: C.grayLight }, itemStyle: { color: C.grayLight },
         endLabel: { show: true, color: C.ink2, formatter: (p) => `SPY ${fmt.spct(p.value / 100 - 1)}` } },
     ],
@@ -471,7 +472,7 @@ function renderSnapshotPerf() {
       label: { show: true, position: 'top', color: C.ink2, formatter: (p) => fmt.spct(p.value) } }],
   });
 
-  $('#perfBasis').style.display = 'none';
+  $('#tradeToggleWrap').style.display = 'none';
 }
 
 function asOfLabel() {
@@ -1023,7 +1024,12 @@ function renderStockCard(err) {
     ${metric('Correlation', fmt.x(st?.corr), 'to S&P 500', GLOSS.corr)}
     ${metric('1Y return', st ? `<span class="${cls(st.periods['1Y'])}">${fmt.spct(st.periods['1Y'])}</span>` : '—', st ? `YTD ${fmt.spct(st.periods.YTD)} · 3M ${fmt.spct(st.periods['3M'])}` : '')}
   </div>
-  <h3 class="mt">Valuation &amp; fundamentals</h3><div class="metrics">
+  <h3 class="mt">Portfolio fit</h3><div class="metrics">
+    ${metric('Our ' + esc(s.sector) + ' weight', fmt.pct(secW), secB != null ? `S&P 500: ${fmt.pct(secB)} (${fmt.pts(secW - secB)})` : '', 'Share of our equity sleeve already in this sector, compared with the S&P 500.')}
+    ${metric('Correlation to portfolio', S.pstats && st ? fmt.x(corrToPortfolio(s.symbol)) : '—', 'Lower = better diversifier', 'How closely this stock has moved with the SMIF portfolio over the past year.')}
+  </div>
+  <details class="fold mt" data-fold="val"><summary><span>Valuation &amp; fundamentals</span><small>${[p.trailingPE != null ? `P/E ${fmt.x(p.trailingPE, 1)}` : '', p.dividendYield != null ? `Yield ${fmt.pct(p.dividendYield, 2)}` : '', upside != null ? `Target ${fmt.spct(upside)}` : ''].filter(Boolean).join(' · ') || 'Tap to view'}</small></summary>
+  <div class="metrics">
     ${metric('Market cap', fmt.big(p.marketCap), '', 'Total value of all shares outstanding.')}
     ${metric('P/E (trailing)', fmt.x(p.trailingPE, 1), '', 'Price ÷ last 12 months of earnings per share. How many dollars you pay for $1 of profit.')}
     ${metric('P/E (forward)', fmt.x(p.forwardPE, 1), '', 'Price ÷ next year\'s expected earnings.')}
@@ -1037,12 +1043,13 @@ function renderStockCard(err) {
     ${metric('Debt / equity', p.debtToEquity != null ? fmt.x(p.debtToEquity / 100) + 'x' : '—', '', 'Total debt ÷ shareholders\' equity.')}
     ${metric('Analyst target', fmt.usdC(p.targetMeanPrice), upside != null ? `<span class="${cls(upside)}">${fmt.spct(upside)} upside</span> · ${p.analystCount || 0} analysts` : '', 'Average 12-month price target from Wall Street analysts.')}
   </div>
-  <h3 class="mt">Portfolio fit</h3><div class="metrics">
-    ${metric('Our ' + esc(s.sector) + ' weight', fmt.pct(secW), secB != null ? `S&P 500: ${fmt.pct(secB)} (${fmt.pts(secW - secB)})` : '', 'Share of our equity sleeve already in this sector, compared with the S&P 500.')}
-    ${metric('Correlation to portfolio', S.pstats && st ? fmt.x(corrToPortfolio(s.symbol)) : '—', 'Lower = better diversifier', 'How closely this stock has moved with the SMIF portfolio over the past year.')}
-  </div>`;
-  if (S.hist) h += `<h3 class="mt">Our history with ${esc(s.symbol)}</h3>` + historyHTML(s.symbol);
-  if (p.summary) h += `<details class="mt" style="color:var(--ink-2);font-size:13px;line-height:1.6"><summary style="cursor:pointer;color:var(--gold);font-weight:600">Business summary</summary><p>${esc(p.summary)}…</p></details>`;
+</details>`;
+  if (S.hist) {
+    const hh = S.hist.tickers[s.symbol], cur = hh?.periods.find((x) => !x.to);
+    const peek = !hh ? 'Never owned' : cur ? `Owned since ${fdate(cur.from)} · ${hh.trades.length} transactions` : `Owned ${hh.periods.map((x) => `${x.from.slice(0, 4)}–${x.to.slice(0, 4)}`).join(', ')} · ${hh.trades.length} transactions`;
+    h += `<details class="fold mt" data-fold="hist"><summary><span>Our history with ${esc(s.symbol)}</span><small>${esc(peek)}</small></summary>${historyHTML(s.symbol)}</details>`;
+  }
+  if (p.summary) h += `<details class="fold mt" data-fold="biz"><summary><span>Business summary</span><small>${esc(p.industry || '')}</small></summary><p style="color:var(--ink-2);font-size:13px;line-height:1.6;margin-top:0">${esc(p.summary)}…</p></details>`;
   $('#stockCard').innerHTML = h;
   if (m) {
     const avg = s.held?.avgCost;
@@ -1362,8 +1369,6 @@ function renderData() {
   renderEditTable();
   $('#setName').value = S.settings.name || '';
   $('#setKey').value = store.sget('key');
-  $('#setMaxPos').value = S.settings.maxPos;
-  $('#setBand').value = S.settings.band;
 }
 function renderEditTable() {
   const cols = [['ticker', 'Ticker', 'text', 90], ['name', 'Name', 'text', 220], ['assetClass', 'Class', 'sel', 130], ['sector', 'Sector', 'text', 190], ['quantity', 'Shares', 'number', 100], ['avgCost', 'Avg cost', 'number', 110], ['purchaseDate', 'First bought', 'date', 150]];
@@ -1606,7 +1611,7 @@ window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 const seg = (id, key, fn) => $$(`#${id} button`).forEach((b) => b.addEventListener('click', () => { S[key] = b.dataset.v; $$(`#${id} button`).forEach((x) => x.classList.toggle('on', x === b)); fn(); }));
 seg('tmColor', 'tmColor', renderAllocation);
 seg('perfRange', 'perfRange', () => { store.set('perfRange', S.perfRange); renderPerfChart(); });
-seg('perfBasis', 'perfBasis', () => { store.set('perfBasis', S.perfBasis); renderPerfChart(); });
+$('#tradeToggle').addEventListener('change', (e) => { S.showTrades = e.target.checked; store.set('showTrades', S.showTrades); renderPerfChart(); });
 seg('secBasis', 'secBasis', () => renderSectorBars('chSector', S.secBasis));
 seg('perfMode', 'perfMode', renderPerformance);
 $('#hSearch').addEventListener('input', renderHoldings);
@@ -1675,8 +1680,8 @@ const draftValid = () => {
 $('#useLocal').addEventListener('click', () => draftValid() && useLocal(S.draft));
 $('#publishEdits').addEventListener('click', () => draftValid() && confirmPublish(S.draft, 'Edited holdings', () => { S.draft = null; }));
 $('#loadHistory').addEventListener('click', loadHistory);
-const saveSettings = () => { S.settings.name = $('#setName').value; S.settings.maxPos = parseFloat($('#setMaxPos').value) || 10; S.settings.band = parseFloat($('#setBand').value) || 5; store.set('settings', { name: S.settings.name, maxPos: S.settings.maxPos, band: S.settings.band }); };
-['setName', 'setMaxPos', 'setBand'].forEach((id) => $('#' + id).addEventListener('change', saveSettings));
+const saveSettings = () => { S.settings.name = $('#setName').value; store.set('settings', { name: S.settings.name }); };
+$('#setName').addEventListener('change', saveSettings);
 $('#setKey').addEventListener('change', (e) => store.sset('key', e.target.value));
 $('#checkKey').addEventListener('click', async () => {
   if (!S.api) return toast('Needs the deployed site.');

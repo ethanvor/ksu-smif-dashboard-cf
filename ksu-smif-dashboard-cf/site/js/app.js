@@ -414,9 +414,6 @@ async function renderPerfChart() {
       xAxis: d, info: v,
       label: { show: false },
     }));
-    // label only the big rebalance days, and only when there's room
-    const big = marks.filter((m) => m.info.buys.length + m.info.sells.length >= 3);
-    if (!long && big.length <= 4) big.forEach((m) => (m.label = { show: true, formatter: 'Rebalance', color: C.muted, fontSize: 10 }));
   }
   const short = r === '1M' || r === '3M';
   setChart('chPerf', {
@@ -588,17 +585,36 @@ function renderAllocation() {
   const groups = Object.entries(byS).sort((a, b) => b[1].reduce((x, r) => x + r.value, 0) - a[1].reduce((x, r) => x + r.value, 0));
   const maxW = Math.max(...calc.rows.map((r) => r.weight));
   const spx = Object.fromEntries((S.base.spxConstituents || []).map((x) => [x.ticker, x.weight]));
-  let html = `<thead><tr><th>Holding</th><th class="n">Value</th><th class="n">Weight (total)</th><th class="n">Weight ex-cash</th><th class="n">Weight in equities</th><th class="n">S&amp;P 500 weight</th></tr></thead><tbody>`;
-  groups.forEach(([s, rs]) => {
+  S.openSectors = S.openSectors || new Set();
+  let html = `<thead><tr><th style="cursor:default">Sector / holding</th><th class="n" style="cursor:default">Value</th><th class="n" style="cursor:default">Weight (total)</th><th class="n" style="cursor:default">Weight ex-cash</th><th class="n" style="cursor:default">Weight in equities</th><th class="n" style="cursor:default">S&amp;P 500 weight</th></tr></thead><tbody>`;
+  groups.forEach(([s, rs], gi) => {
     const v = rs.reduce((a, r) => a + r.value, 0);
-    html += `<tr class="sector-row"><td>${esc(s)} <span class="tag">${rs.length}</span></td><td class="n">${fmt.usd(v)}</td><td class="n">${fmt.pct(v / calc.total, 2)}</td><td></td><td class="n">${s in calc.sectors ? fmt.pct(calc.sectors[s].wEq, 2) : ''}</td><td class="n">${S.base.benchmark.sectorWeights[s] != null ? fmt.pct(S.base.benchmark.sectorWeights[s], 2) : ''}</td></tr>`;
+    const open = S.openSectors.has(s);
+    html += `<tr class="sector-row fold-row${open ? ' open' : ''}" data-sector="${esc(s)}" tabindex="0" role="button" aria-expanded="${open}"><td><span class="caret">▸</span>${esc(s)} <span class="tag">${rs.length}</span></td><td class="n">${fmt.usd(v)}</td><td class="n">${fmt.pct(v / calc.total, 2)}</td><td></td><td class="n">${s in calc.sectors ? fmt.pct(calc.sectors[s].wEq, 2) : ''}</td><td class="n">${S.base.benchmark.sectorWeights[s] != null ? fmt.pct(S.base.benchmark.sectorWeights[s], 2) : ''}</td></tr>`;
     rs.sort((a, b) => b.value - a.value).forEach((r) => {
-      html += `<tr><td><span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span></td><td class="n">${fmt.usd(r.value)}</td>
+      html += `<tr class="child-row clickable" data-parent="${esc(s)}" data-open="${r.ticker}" ${open ? '' : 'hidden'}><td style="padding-left:34px"><span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span></td><td class="n">${fmt.usd(r.value)}</td>
         <td class="n"><div class="wbar"><i style="width:${(r.weight / maxW) * 90}px"></i>${fmt.pct(r.weight, 2)}</div></td>
         <td class="n">${fmt.pct(r.weightExCash, 2)}</td><td class="n">${fmt.pct(r.weightEq, 2)}</td><td class="n">${spx[r.ticker] != null ? fmt.pct(spx[r.ticker], 2) : '—'}</td></tr>`;
     });
   });
-  $('#tblWeights').innerHTML = html + '</tbody>';
+  const tbl = $('#tblWeights');
+  tbl.innerHTML = html + '</tbody>';
+  const toggle = (row, force) => {
+    const s = row.dataset.sector, open = force ?? !S.openSectors.has(s);
+    open ? S.openSectors.add(s) : S.openSectors.delete(s);
+    row.classList.toggle('open', open); row.setAttribute('aria-expanded', open);
+    $$(`tr[data-parent="${CSS.escape(s)}"]`, tbl).forEach((tr) => (tr.hidden = !open));
+  };
+  $$('tr.fold-row', tbl).forEach((row) => {
+    row.addEventListener('click', () => toggle(row));
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(row); } });
+  });
+  $$('tr.child-row', tbl).forEach((tr) => tr.addEventListener('click', () => openStock(tr.dataset.open)));
+  const btn = $('#wExpand');
+  const syncBtn = () => (btn.textContent = S.openSectors.size === groups.length ? 'Collapse all' : 'Expand all');
+  syncBtn();
+  btn.onclick = () => { const all = S.openSectors.size !== groups.length; $$('tr.fold-row', tbl).forEach((r) => toggle(r, all)); syncBtn(); };
+  $$('tr.fold-row', tbl).forEach((row) => row.addEventListener('click', syncBtn));
 }
 
 // ======================================================================

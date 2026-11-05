@@ -423,3 +423,10 @@ html, body { max-width: 100%; }
 .fold > summary:hover { background: rgba(255,198,41,.04); border-radius: 14px; }
 .fold > *:not(summary) { margin: 0 14px 14px; }
 @media (max-width: 760px) { .fold > summary { flex-wrap: wrap; } .fold > summary small { margin-left: 0; text-align: left; width: calc(100% - 24px); order: 3; } }
+
+/* collapsible sector rows in Position weights */
+tr.fold-row { cursor: pointer; }
+tr.fold-row:hover td { background: rgba(255,198,41,.07); }
+tr.fold-row .caret { display: inline-block; width: 16px; color: var(--gold); transition: transform .2s; }
+tr.fold-row.open .caret { transform: rotate(90deg); }
+tr.fold-row:focus-visible td { outline: 2px solid var(--gold); outline-offset: -2px; }

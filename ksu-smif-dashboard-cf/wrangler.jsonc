@@ -1,9 +1,14 @@
 // Cloudflare settings for the SMIF dashboard (Workers + static assets).
 {
   // must match the project name shown in the Cloudflare dashboard
-  "name": "smif",
+  "name": "ksu-smif-dashboard-cf",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
+  // keep the free <name>.<account>.workers.dev address switched on after every deploy
+  "workers_dev": true,
+  "preview_urls": true,
+  // keep variables you add in the Cloudflare dashboard (deploys won't erase them)
+  "keep_vars": true,
   "assets": {
     "directory": "./site",
     "binding": "ASSETS",

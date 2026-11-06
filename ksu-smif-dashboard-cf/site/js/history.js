@@ -15,6 +15,7 @@ const SHARE_SIGN = {
   'Credit Security (Custodian Lot Adjustment)': 1, 'Debit Security (Custodian Lot Adjustment)': -1,
   'Income (Reinvested Dividend)': 1, 'Income (Reinvested Qualified Dividend)': 1,
 };
+export const MMF = new Set(['SNOXX', 'SWVXX', 'SNVXX', 'SNSXX', 'SPAXX', 'VMFXX']); // money-market funds
 export const DUST = 0.05; // fractional leftovers from old dividend reinvestment count as zero
 
 const iso = (v) => {
@@ -62,6 +63,7 @@ export function buildHistory(rows, source = 'Transaction history') {
   const cashSeries = [];
   const flows = [];
   const income = []; // dated dividends/interest net of fees — the fund's investment income
+  const cashIncome = []; // the part earned on cash and the money-market fund (interest, MMF dividends)
   const totals = { dividends: 0, realized: 0, foreignTax: 0, deposits: 0, withdrawals: 0, buys: 0, sells: 0, trades: 0 };
   const st = (sym) => (S[sym] = S[sym] || { ticker: sym, name: nameBy[sym] || sym, qty: 0, cost: 0, realized: 0, dividends: 0, foreignTax: 0, bought: 0, sold: 0, trades: [], periods: [], open: null });
 
@@ -75,6 +77,7 @@ export function buildHistory(rows, source = 'Transaction history') {
     if (sym === 'CASH' && act.startsWith('Income (Reinvested')) cash += amt;
     const inc = INCOME.has(act) || (sym === 'CASH' && act.startsWith('Income (Reinvested')) ? amt : act.startsWith('Expense') ? -amt : 0;
     if (inc) { const li = income[income.length - 1]; if (li && li[0] === day) li[1] = +(li[1] + inc).toFixed(2); else income.push([day, +inc.toFixed(2)]); }
+    if (inc > 0 && (sym === 'CASH' || MMF.has(sym))) { const lc = cashIncome[cashIncome.length - 1]; if (lc && lc[0] === day) lc[1] = +(lc[1] + inc).toFixed(2); else cashIncome.push([day, +inc.toFixed(2)]); }
     if (act === 'Deposit') { flows.push([day, amt]); totals.deposits += amt; }
     if (act === 'Withdrawal') { flows.push([day, -amt]); totals.withdrawals += amt; }
     const last = cashSeries[cashSeries.length - 1];
@@ -137,7 +140,7 @@ export function buildHistory(rows, source = 'Transaction history') {
   Object.values(S).filter((s) => s.trades.length).forEach((s) => (tickers[s.ticker] = s));
   return {
     source, from: r[0]?.day, to: r[r.length - 1]?.day, transactions: r.length, builtAt: new Date().toISOString(),
-    cash: +cash.toFixed(2), cashSeries, flows, income, totals, tickers,
+    cash: +cash.toFixed(2), cashSeries, flows, income, cashIncome, totals, tickers,
   };
 }
 

@@ -451,9 +451,9 @@ function perfWindowStats(bt, s, e) {
 }
 function perfData(bt, s) {
   const b0 = bt.smif[s], c0 = bt.bench[s];
-  // growth of 100 from the first day in view; gap is the difference in returns (percentage points)
-  const sm = bt.smif.map((v) => +((v / b0) * 100).toFixed(2));
-  const sp = bt.bench.map((v) => +((v / c0) * 100).toFixed(2));
+  // % return from the first day in view (starts at 0%); gap = SMIF's return minus the S&P's
+  const sm = bt.smif.map((v) => +((v / b0 - 1) * 100).toFixed(2));
+  const sp = bt.bench.map((v) => +((v / c0 - 1) * 100).toFixed(2));
   return { sm, sp, gap: sm.map((v, i) => +(v - sp[i]).toFixed(2)) };
 }
 function perfStatsHTML(bt, s, e) {
@@ -463,7 +463,7 @@ function perfStatsHTML(bt, s, e) {
   $('#perfStats').innerHTML = `
     <span>SMIF <b class="${cls(w.sm)}">${fmt.spct(w.sm)}</b></span>
     <span>S&amp;P 500 <b class="${cls(w.sp)}">${fmt.spct(w.sp)}</b></span>
-    <span>Difference <b class="${cls(w.diff)}">${fmt.pts(w.diff)}</b></span>
+    <span>Difference <b class="${cls(w.diff)}">${fmt.spct(w.diff)}</b></span>
     ${w.smA != null ? `<span>Annualized <b>${fmt.spct(w.smA)}</b> vs <b>${fmt.spct(w.spA)}</b></span>` : ''}`;
   $('#perfFrom').value = bt.dates[s]; $('#perfTo').value = bt.dates[e];
   $('#perfReset').style.display = S.perfWin.full ? 'none' : '';
@@ -476,15 +476,15 @@ function drawPerf(fresh) {
   const gapView = S.perfView === 'diff';
   $$('#perfView button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.perfView));
   perfStatsHTML(bt, s, e);
-  const pctAxis = gapView ? { ...axisCommon.axisLabel, formatter: (v) => `${v > 0 ? '+' : ''}${v} pts` } : axisCommon.axisLabel;
+  const pctAxis = { ...axisCommon.axisLabel, formatter: (v) => `${v > 0 ? '+' : ''}${v}%` };
   const zeroLine = { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: C.axis, type: 'solid', width: 1 }, data: [{ yAxis: 0 }] };
   const tradeLines = marks.length && S.showTrades ? marks : [];
   const tooltip = { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: C.gold, opacity: 0.5 } },
     formatter: (p) => {
       const d = p[0].axisValue, i = bt.dates.indexOf(d), { D, s } = S.perfD;
       let h = `<b>${fdate(d)}</b><span style="color:${C.muted}"> · since ${fdate(bt.dates[s])}</span><br>`;
-      h += `<span style="color:${C.gold}">●</span> SMIF: ${fmt.spct(D.sm[i] / 100 - 1)}<br><span style="color:${C.grayLight}">●</span> S&amp;P 500: ${fmt.spct(D.sp[i] / 100 - 1)}<br>`;
-      h += D.gap[i] >= 0 ? `<span style="color:#3ccf7f">SMIF ahead by ${D.gap[i].toFixed(1)} pts</span>` : `<span style="color:#f0625a">SMIF behind by ${(-D.gap[i]).toFixed(1)} pts</span>`;
+      h += `<span style="color:${C.gold}">●</span> SMIF: ${fmt.spct(D.sm[i] / 100)}<br><span style="color:${C.grayLight}">●</span> S&amp;P 500: ${fmt.spct(D.sp[i] / 100)}<br>`;
+      h += D.gap[i] >= 0 ? `<span style="color:${C.up}">SMIF ahead of the S&amp;P 500 by ${D.gap[i].toFixed(1)}%</span>` : `<span style="color:${C.down}">SMIF behind the S&amp;P 500 by ${(-D.gap[i]).toFixed(1)}%</span>`;
       if (bt.actual && i >= 0) h += `<br><span style="color:${C.muted}">Fund value: ${fmt.usd(bt.values[i])}</span>`;
       const m = S.showTrades && marks.find((x) => x.xAxis === d);
       if (m) {
@@ -497,15 +497,17 @@ function drawPerf(fresh) {
   const series = gapView
     ? [{ name: 'SMIF minus S&P 500', type: 'line', data: D.gap, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold },
         areaStyle: { origin: 0, color: 'rgba(255,198,41,0.14)' },
-        endLabel: { show: true, color: C.ink, formatter: (p) => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)} pts` },
+        endLabel: { show: true, color: C.ink, formatter: (p) => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(1)}%` },
         markLine: { ...zeroLine, data: [{ yAxis: 0 }, ...tradeLines.map((m) => ({ ...m, lineStyle: { color: 'rgba(255,198,41,0.28)', type: 'dashed', width: 1 } }))] } }]
     : [{ name: bt.actual ? 'SMIF (actual)' : 'SMIF', type: 'line', data: D.sm, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(255,198,41,0.22)' }, { offset: 1, color: 'rgba(255,198,41,0)' }]) },
-        endLabel: { show: true, color: C.ink, formatter: (p) => `SMIF ${fmt.spct(p.value / 100 - 1)}` }, labelLayout: { moveOverlap: 'shiftY' },
-        markLine: tradeLines.length ? { silent: true, symbol: 'none', label: { show: false }, data: tradeLines.map((m) => ({ ...m, lineStyle: { color: 'rgba(255,198,41,0.28)', type: 'dashed', width: 1 } })) } : undefined },
+        areaStyle: { origin: 0, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(255,198,41,0.22)' }, { offset: 1, color: 'rgba(255,198,41,0)' }]) },
+        endLabel: { show: true, color: C.ink, formatter: (p) => `SMIF ${fmt.spct(p.value / 100)}` }, labelLayout: { moveOverlap: 'shiftY' },
+        markLine: { ...zeroLine, data: [{ yAxis: 0 }, ...tradeLines.map((m) => ({ ...m, lineStyle: { color: 'rgba(255,198,41,0.28)', type: 'dashed', width: 1 } }))] } },
       { name: 'S&P 500 (SPY)', type: 'line', data: D.sp, showSymbol: false, lineStyle: { width: 2, color: C.grayLight }, itemStyle: { color: C.grayLight },
-        endLabel: { show: true, color: C.ink2, formatter: (p) => `SPY ${fmt.spct(p.value / 100 - 1)}` }, labelLayout: { moveOverlap: 'shiftY' } }];
-  if (!fresh && charts.chPerf) { charts.chPerf.setOption({ series }, { replaceMerge: ['series'] }); return; }
+        endLabel: { show: true, color: C.ink2, formatter: (p) => `SPY ${fmt.spct(p.value / 100)}` }, labelLayout: { moveOverlap: 'shiftY' } }];
+  if (!fresh && charts.chPerf) { charts.chPerf.setOption({ animationDurationUpdate: 0, series }, { replaceMerge: ['series'] }); return; }
+  // new time frame: wipe the old lines first so they draw in cleanly instead of morphing into the new shape
+  if (charts.chPerf && !charts.chPerf.isDisposed()) charts.chPerf.clear();
   setChart('chPerf', {
     grid: { left: 44, right: gapView ? 70 : 78, top: 20, bottom: 58 },
     tooltip,
@@ -869,6 +871,7 @@ function renderRisk() {
   });
   sortableTable('#tblRisk', [
     { k: 'ticker', l: 'Ticker', f: (r) => `<span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span>` },
+    { k: 'assetClass', l: 'Class', f: (r) => acTag(r.assetClass) },
     { k: 'weight', l: 'Weight', n: 1, f: (r) => fmt.pct(r.weight, 2) },
     { k: 'beta', l: 'Beta', n: 1, f: (r) => fmt.x(r.beta), t: GLOSS.beta },
     { k: 'betaContrib', l: 'Beta contribution', n: 1, f: (r) => fmt.x(r.betaContrib, 3), t: 'Weight × beta. Adds up to the portfolio\'s weighted beta — shows which positions drive market sensitivity.' },
@@ -1029,10 +1032,11 @@ function renderHistoryLists() {
   const q = ($('#fhSearch').value || '').trim().toLowerCase();
   const rows = former.filter((t) => !q || t.ticker.toLowerCase().includes(q) || (t.name || '').toLowerCase().includes(q)).map((t) => {
     const last = t.periods[t.periods.length - 1];
-    return { ...t, from: t.periods[0].from, to: last.to, held: t.periods.reduce((a, p) => a + yearsBetween(p.from, p.to), 0) };
+    return { ...t, assetClass: assetClassOf(t.ticker, t.name, currentClasses()), from: t.periods[0].from, to: last.to, held: t.periods.reduce((a, p) => a + yearsBetween(p.from, p.to), 0) };
   });
   sortableTable('#tblFormer', [
-    { k: 'ticker', l: 'Stock', f: (r) => `<span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span>` },
+    { k: 'ticker', l: 'Holding', f: (r) => `<span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span>` },
+    { k: 'assetClass', l: 'Class', f: (r) => acTag(r.assetClass || assetClassOf(r.ticker, r.name, currentClasses())) },
     { k: 'from', l: 'First bought', n: 1, f: (r) => fdate(r.from) },
     { k: 'to', l: 'Last sold', n: 1, f: (r) => fdate(r.to) },
     { k: 'held', l: 'Time held', n: 1, f: (r) => (r.held >= 1 ? r.held.toFixed(1) + ' yrs' : Math.max(1, Math.round(r.held * 12)) + ' mo') + (r.periods.length > 1 ? ` <span class="tag">${r.periods.length}×</span>` : '') },
@@ -1045,8 +1049,8 @@ function renderHistoryLists() {
   const trades = [];
   all.forEach((t) => t.trades.forEach((x) => { if ((x.type === 'Buy' || x.type === 'Sell') && (!type || x.type === type) && (!tq || t.ticker.includes(tq))) trades.push({ ...x, ticker: t.ticker, name: t.name }); }));
   trades.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.ticker.localeCompare(b.ticker)));
-  $('#tblTrades').innerHTML = `<thead><tr><th style="cursor:default">Date</th><th style="cursor:default">Action</th><th style="cursor:default">Stock</th><th class="n" style="cursor:default">Shares</th><th class="n" style="cursor:default">Price</th><th class="n" style="cursor:default">Amount</th></tr></thead><tbody>${
-    trades.slice(0, tlShown).map((t) => `<tr class="clickable" data-hist="${t.ticker}"><td>${fdate(t.date)}</td><td><span class="ttype ${t.type === 'Buy' ? 'buy' : 'sell'}">${t.type}</span></td><td><span class="tk">${t.ticker}</span><span class="nm">${esc(t.name)}</span></td><td class="n">${fmt.n(t.shares, 2)}</td><td class="n">${fmt.usdC(t.price)}</td><td class="n">${fmt.usd(t.amount)}</td></tr>`).join('')}</tbody>`;
+  $('#tblTrades').innerHTML = `<thead><tr><th style="cursor:default">Date</th><th style="cursor:default">Action</th><th style="cursor:default">Holding</th><th style="cursor:default">Class</th><th class="n" style="cursor:default">Shares</th><th class="n" style="cursor:default">Price</th><th class="n" style="cursor:default">Amount</th></tr></thead><tbody>${
+    trades.slice(0, tlShown).map((t) => `<tr class="clickable" data-hist="${t.ticker}"><td>${fdate(t.date)}</td><td><span class="ttype ${t.type === 'Buy' ? 'buy' : 'sell'}">${t.type}</span></td><td><span class="tk">${t.ticker}</span><span class="nm">${esc(t.name)}</span></td><td>${acTag(assetClassOf(t.ticker, t.name, currentClasses()))}</td><td class="n">${fmt.n(t.shares, 2)}</td><td class="n">${fmt.usdC(t.price)}</td><td class="n">${fmt.usd(t.amount)}</td></tr>`).join('')}</tbody>`;
   $('#tlMore').style.display = trades.length > tlShown ? '' : 'none';
   $('#tlMore').textContent = `Show more (${trades.length - tlShown} left)`;
 }
@@ -1113,15 +1117,19 @@ async function analyze(sym) {
     symbol: sym,
     name: prof?.name || m?.name || held?.name || spx?.name || sym,
     sector: null, industry: '',
-    assetClass: held?.assetClass || (m?.type === 'ETF' || prof?.quoteType === 'ETF' ? 'Equity' : 'Equity'),
+    assetClass: held?.assetClass || assetClassOf(sym, prof?.name || m?.name || spx?.name || ''),
     price, live: !!m, m, prof, st, held, spx,
   };
   if (!m && !held && !price) {
     S.stock.manual = true;
   }
-  S.stock.gics = gicsFor(held, prof, held?.sector || (prof?.sector ? toGics(prof.sector) : spx?.sector), spx?.sector, sym);
-  S.stock.sector = S.stock.gics.sector || 'Other';
-  S.stock.industry = S.stock.gics.industry || prof?.industry || '';
+  if (S.stock.assetClass === 'Equity') {
+    S.stock.gics = gicsFor(held, prof, held?.sector || (prof?.sector ? toGics(prof.sector) : spx?.sector), spx?.sector, sym);
+    S.stock.sector = S.stock.gics.sector || 'Other';
+    S.stock.industry = S.stock.gics.industry || prof?.industry || '';
+  } else { // bond ETFs and money-market funds have no GICS sector
+    S.stock.gics = null; S.stock.sector = S.stock.assetClass; S.stock.industry = '';
+  }
   renderStockCard(err);
   syncTradePanel();
 }
@@ -1139,7 +1147,7 @@ function renderStockCard(err) {
   let h = `<div class="stock-head">
     <div><div class="row"><h2 style="font-size:24px">${esc(s.symbol)}</h2>${s.held ? `<span class="tag gold">In portfolio</span>` : ''}${s.spx ? `<span class="tag">S&amp;P 500 · ${fmt.pct(s.spx.weight, 2)}</span>` : ''}</div>
       <div style="color:var(--ink-2);margin-top:4px">${esc(s.name)}</div>
-      ${gicsLine(s)}</div>
+      ${s.assetClass === 'Equity' ? gicsLine(s) : `<div class="gics-line">${acTag(s.assetClass)}<span style="color:var(--muted)">${s.assetClass === 'Fixed Income' ? '· bond fund · compared with the Bloomberg US Aggregate (AGG), not the S&amp;P 500' : '· cash-like · earns roughly the T-bill yield'}${s.m?.exchange ? ' · ' + esc(s.m.exchange) : ''}</span></div>`}</div>
     <div class="px-wrap"><div class="px num">${s.price != null ? fmt.usdC(s.price) : '—'}</div>${day != null ? `<span class="chg ${day >= 0 ? 'up' : 'down'}">${fmt.spct(day, 2)} today</span>` : ''}
       <div style="color:var(--muted);font-size:11px;margin-top:6px">${s.live ? 'Live (delayed) · Yahoo Finance' : s.held ? 'Snapshot price from workbook' : 'No live data'}</div></div></div>`;
   if (err && !s.live) h += `<div class="warn-box">⚠ Couldn't load market data for ${esc(s.symbol)} (${esc(err)}). ${s.held ? 'Using the workbook price.' : 'Enter a price manually in the trade panel to simulate.'}</div>`;
@@ -1148,8 +1156,8 @@ function renderStockCard(err) {
   if (m || s.held) h += `<div class="stock-chart-bar mt">
       <div class="seg sm" id="stkRange">${['1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y'].map((r) => `<button data-v="${r}"${r === S.stockRange ? ' class="on"' : ''}>${r}</button>`).join('')}</div>
       <div class="cmp-box"><input class="input" id="cmpInput" list="cmpList" placeholder="Compare with… (e.g. MSFT)" autocomplete="off" value="${esc(S.cmp || '')}" />
-        <datalist id="cmpList">${['SPY', ...allSymbols().filter((t) => t !== s.symbol)].map((t) => `<option value="${t}">`).join('')}</datalist>
-        <button class="btn sm" id="cmpSpy" title="Compare with the S&amp;P 500">vs S&amp;P</button>${S.cmp ? '<button class="btn sm" id="cmpClear" title="Stop comparing">✕</button>' : ''}</div>
+        <datalist id="cmpList">${['SPY', 'AGG', ...allSymbols().filter((t) => t !== s.symbol)].map((t) => `<option value="${t}">`).join('')}</datalist>
+        <button class="btn sm" id="cmpSpy" data-bench="${s.assetClass === 'Equity' ? 'SPY' : 'AGG'}" title="Compare with ${s.assetClass === 'Equity' ? 'the S&amp;P 500' : 'the Bloomberg US Aggregate bond index (AGG)'}">vs ${s.assetClass === 'Equity' ? 'S&amp;P' : 'AGG'}</button>${S.cmp ? '<button class="btn sm" id="cmpClear" title="Stop comparing">✕</button>' : ''}</div>
     </div><div class="row" id="stkStats" style="gap:18px;font-size:13px;color:var(--ink-2);margin:6px 0 0"></div>`;
   h += `<div id="chStock" class="chart short mt"></div>`;
   if (st) {
@@ -1166,7 +1174,10 @@ function renderStockCard(err) {
     ${metric('1Y return', st ? `<span class="${cls(st.periods['1Y'])}">${fmt.spct(st.periods['1Y'])}</span>` : '—', st ? `YTD ${fmt.spct(st.periods.YTD)} · 3M ${fmt.spct(st.periods['3M'])}` : '')}
   </div>
   <h3 class="mt">Portfolio fit</h3><div class="metrics">
-    ${metric('Our ' + esc(s.sector) + ' weight', fmt.pct(secW), secB != null ? `S&P 500: ${fmt.pct(secB)} (${fmt.pts(secW - secB)})` : '', 'Share of our equity sleeve already in this sector, compared with the S&P 500.')}
+    ${s.assetClass === 'Equity' ? metric('Our ' + esc(s.sector) + ' weight', fmt.pct(secW), secB != null ? `S&P 500: ${fmt.pct(secB)} (${fmt.pts(secW - secB)})` : '', 'Share of our stocks already in this sector, compared with the S&P 500.')
+      : s.assetClass === 'Fixed Income' ? metric('Our fixed-income weight', fmt.pct(calc.fiValue / calc.total), `${fmt.usd(calc.fiValue)} · ${fmt.pct(calc.fiValue / (calc.eqValue + calc.fiValue))} of stocks + bonds`, 'Bond ETFs as a share of the whole fund. Bonds are judged against the Bloomberg US Aggregate (AGG) on the Performance tab, not against S&P sectors.')
+        + metric('Bond funds we hold', esc(calc.rows.filter((r) => r.assetClass === 'Fixed Income').map((r) => r.ticker).join(', ') || 'none'), '', 'Current fixed-income positions.')
+      : metric('Cash + money market', fmt.pct(calc.cashLike / calc.total), `${fmt.usd(calc.cashLike)} available to deploy`, 'Cash-like holdings. Trade Lab buys are paid from cash only.')}
     ${metric('Correlation to portfolio', S.pstats && st ? fmt.x(corrToPortfolio(s.symbol)) : '—', 'Lower = better diversifier', 'How closely this stock has moved with the SMIF portfolio over the past year.')}
   </div>
   <details class="fold mt" data-fold="val"><summary><span>Valuation &amp; fundamentals</span><small>${[p.trailingPE != null ? `P/E ${fmt.x(p.trailingPE, 1)}` : '', p.dividendYield != null ? `Yield ${fmt.pct(p.dividendYield, 2)}` : '', upside != null ? `Target ${fmt.spct(upside)}` : ''].filter(Boolean).join(' · ') || 'Tap to view'}</small></summary>
@@ -1242,13 +1253,14 @@ function bindStockChart() {
   if (!inp) return;
   inp.addEventListener('change', () => setCmp(inp.value));
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); setCmp(inp.value); } });
-  $('#cmpSpy').onclick = () => setCmp('SPY');
+  $('#cmpSpy').onclick = () => setCmp($('#cmpSpy').dataset.bench || 'SPY');
   if ($('#cmpClear')) $('#cmpClear').onclick = () => setCmp('');
 }
 async function drawStockChart() {
   const s = S.stock;
   if (!$('#chStock')) return;
   const r = S.stockRange, long = stkLong(r), sym = s.symbol, cmp = S.cmp;
+  if (charts.chStock && !charts.chStock.isDisposed()) charts.chStock.clear();
   const token = (S.stkTok = (S.stkTok || 0) + 1);
   if (!s.m) { emptyChart('chStock', s.held ? 'Price history appears once live data is connected.' : 'No price history available.'); return; }
   if (long || cmp) $('#stkStats').innerHTML = '<span>Loading prices…</span>';
@@ -1275,7 +1287,7 @@ async function drawStockChart() {
     const A = tr.map((v) => +((v / tr[0]) * 100).toFixed(2));
     const B = f0 < 0 ? [] : cAl.map((v, i) => (i < f0 || v == null ? null : +((v / cAl[f0]) * 100).toFixed(2)));
     const rA = ret(tr), rB = f0 >= 0 ? cAl[cAl.length - 1] / cAl[f0] - 1 : null;
-    if (c) $('#stkStats').innerHTML = `<span><b style="color:${C.gold}">${esc(sym)}</b> <b class="${cls(rA)}">${fmt.spct(rA)}</b></span><span><b style="color:${C.grayLight}">${esc(cmp)}</b> <b class="${cls(rB)}">${fmt.spct(rB)}</b></span>${rB != null ? `<span>Difference <b class="${cls(rA - rB)}">${fmt.pts(rA - rB)}</b></span>` : ''}<span style="color:var(--muted)">Total return incl. dividends · start = 100</span>`;
+    if (c) $('#stkStats').innerHTML = `<span><b style="color:${C.gold}">${esc(sym)}</b> <b class="${cls(rA)}">${fmt.spct(rA)}</b></span><span><b style="color:${C.grayLight}">${esc(cmp)}</b> <b class="${cls(rB)}">${fmt.spct(rB)}</b></span>${rB != null ? `<span>Difference <b class="${cls(rA - rB)}">${fmt.spct(rA - rB)}</b></span>` : ''}<span style="color:var(--muted)">Total return incl. dividends · start = 100</span>`;
     setChart('chStock', {
       grid: { left: 44, right: 96, top: 22, bottom: 24 },
       legend: { top: 0, right: 0, textStyle: { color: C.ink2 }, icon: 'roundRect', itemWidth: 12, itemHeight: 3 },
@@ -1446,14 +1458,15 @@ function renderImpact() {
   h += row('Total fund value', fmt.usd(before.total), fmt.usd(after.total));
   h += row('Number of positions', before.rows.length, after.rows.length);
   h += row('Cash', `${fmt.usd(before.cash)} (${fmt.pct(before.cash / before.total)})`, `${fmt.usd(after.cash)} (${fmt.pct(after.cash / after.total)})`, 'Buys are paid from cash only; sells add their proceeds to cash. The money market fund (SNOXX) is left as is.');
-  h += row('Equity weight', fmt.pct(before.eqValue / before.total), fmt.pct(after.eqValue / after.total));
+  h += row('Equity weight', fmt.pct(before.eqValue / before.total), fmt.pct(after.eqValue / after.total), 'Stocks as a share of the whole fund.');
+  h += row('Fixed income weight', fmt.pct(before.fiValue / before.total), fmt.pct(after.fiValue / after.total), 'Bond ETFs as a share of the whole fund.');
   const tickers = [...new Set(S.trades.map((t) => t.ticker))];
   tickers.forEach((tk) => {
     const b = before.rows.find((r) => r.ticker === tk), a = after.rows.find((r) => r.ticker === tk);
     h += row(`<b>${tk}</b>&nbsp;weight`, fmt.pct(b?.weight || 0, 2), fmt.pct(a?.weight || 0, 2));
   });
   const secsT = [...new Set(S.trades.map((t) => t.sector).filter((s) => s && bw[s] != null))];
-  secsT.forEach((s) => h += row(`${s} (S&amp;P ${fmt.pct(bw[s])})`, fmt.pct(before.sectors[s]?.wEq || 0), fmt.pct(after.sectors[s]?.wEq || 0), 'Share of our equity sleeve in this sector.'));
+  secsT.forEach((s) => h += row(`${s} (S&amp;P ${fmt.pct(bw[s])})`, fmt.pct(before.sectors[s]?.wEq || 0), fmt.pct(after.sectors[s]?.wEq || 0), 'Share of our stocks in this sector.'));
   if (S.live) {
     h += row('Portfolio beta', fmt.x(weightedBeta(before, betas)), fmt.x(weightedBeta(after, betas)), GLOSS.beta);
     if (pb && pa) {
@@ -1883,7 +1896,8 @@ function diffPositions(oldP, newP) {
     rows.push({ t, name: (N[t] || O[t]).name, ac: (N[t] || O[t]).assetClass, action, o, n, d, price: px[t].price, value: d * px[t].price, wB: wB[t] || 0, wA: wA[t] || 0 });
   }
   const order = { 'New position': 0, Added: 1, Trimmed: 2, 'Sold out': 3 };
-  rows.sort((x, y) => order[x.action] - order[y.action] || Math.abs(y.value) - Math.abs(x.value));
+  const acOrder = { Equity: 0, 'Fixed Income': 1, 'Money Market': 2 };
+  rows.sort((x, y) => (acOrder[x.ac] ?? 3) - (acOrder[y.ac] ?? 3) || order[x.action] - order[y.action] || Math.abs(y.value) - Math.abs(x.value));
   const unchanged = newP.holdings.filter((h) => O[h.ticker] && Math.abs(+O[h.ticker].quantity - +h.quantity) < 1e-6).length;
   return { rows, basis, unchanged, before, after, implied: -rows.reduce((x, r) => x + r.value, 0), cashFrom: +oldP.cash || 0, cashTo: +newP.cash || 0 };
 }
@@ -1925,7 +1939,7 @@ function openTradeReview(next, fname, parsed = {}) {
       <div><small>Total value</small><b>${fmt.usd(D.before.total)} <span class="arrow">→</span> ${fmt.usd(D.after.total)}</b></div>
       <div><small>Positions</small><b>${D.before.rows.length} <span class="arrow">→</span> ${D.after.rows.length}</b></div>
     </div>
-    ${D.rows.length ? `<div class="table-wrap"><table class="tr-table"><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Trade</th><th class="n" style="cursor:default">Shares (old → new)</th><th class="n" style="cursor:default">Trade value ${tip('Change in shares × the price in the uploaded file. Weights use that same price for both old and new, so they show the effect of the trades only, not price moves.')}</th><th class="n" style="cursor:default">Weight (old → new)</th></tr></thead><tbody>${D.rows.map(rowHTML).join('')}</tbody></table></div>
+    ${D.rows.length ? `<div class="table-wrap"><table class="tr-table"><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Trade</th><th class="n" style="cursor:default">Shares (old → new)</th><th class="n" style="cursor:default">Trade value ${tip('Change in shares × the price in the uploaded file. Weights use that same price for both old and new, so they show the effect of the trades only, not price moves.')}</th><th class="n" style="cursor:default">Weight (old → new)</th></tr></thead><tbody>${D.rows.map((r, i) => (i === 0 || D.rows[i - 1].ac !== r.ac ? `<tr class="tr-group"><td colspan="5">${acTag(r.ac)}<span>${D.rows.filter((x) => x.ac === r.ac).length} change${D.rows.filter((x) => x.ac === r.ac).length > 1 ? 's' : ''}</span></td></tr>` : '') + rowHTML(r)).join('')}</tbody></table></div>
       <div class="hint" style="color:var(--muted);font-size:12px">${D.unchanged} other position${D.unchanged === 1 ? '' : 's'} unchanged.</div>`
       : `<div class="empty" style="padding:14px">No trades — share counts are the same as the current master.</div>`}
     ${D.basis.length ? `<details class="fold"><summary><span>Cost basis updated without a trade (${D.basis.length})</span><small>Usually Schwab lot adjustments</small></summary><div style="font-size:13px;color:var(--ink-2)">${D.basis.map((x) => `<div class="list-item"><b>${esc(x.t)}</b><span>${fmt.usdC(x.from)} → ${fmt.usdC(x.to)} per share</span></div>`).join('')}</div></details>` : ''}
@@ -2346,11 +2360,11 @@ async function scrappyContext(q) {
   if (S.perfBt?.bt) { const b = S.perfBt.bt, w = perfWindowStats(b, 0, b.dates.length - 1); L.push(`Actual fund performance shown on the overview chart (${b.dates[0]} to ${b.dates[b.dates.length - 1]}, time-weighted, from Schwab transactions): SMIF ${fmt.spct(w.sm)} vs S&P 500 ${fmt.spct(w.sp)}${w.smA != null ? `, annualized ${fmt.spct(w.smA)} vs ${fmt.spct(w.spA)}` : ''}.`); }
   if (RV.loaded && RV.ss) {
     const yr = (w) => calendarYears(w).slice(-6).map((y) => `${y.year}${y.partial ? '*' : ''}: ${fmt.spct(y.fund)} vs ${fmt.spct(y.bench)}`).join('; ');
-    L.push(`Calendar-year returns (* = partial year), from the Performance tab — total fund vs SPY: ${yr(RV.total || [])}. Equity sleeve vs SPY: ${yr(viewWeeks(RV.ss, 'eq'))}. Fixed-income sleeve vs AGG (held since ${RV.ss.fiStart || 'n/a'}): ${yr(viewWeeks(RV.ss, 'fi')) || 'no history'}.`);
+    L.push(`Calendar-year returns (* = partial year), from the Performance tab — total fund vs SPY: ${yr(RV.total || [])}. Stocks vs SPY: ${yr(viewWeeks(RV.ss, 'eq'))}. Fixed income vs AGG (held since ${RV.ss.fiStart || 'n/a'}): ${yr(viewWeeks(RV.ss, 'fi')) || 'no history'}.`);
   }
   L.push('\n# Holdings (ticker | name | GICS sector / industry | shares | price | value | % of fund | avg cost | gain since purchase | first bought | 1Y beta)');
   [...c.rows].sort((a, b) => b.value - a.value).forEach((r) => L.push(`${r.ticker} | ${r.name} | ${r.assetClass === 'Equity' ? `${r.sector} / ${fullIndustry(r.industry)}` : r.assetClass} | ${fmt.n(r.quantity, 2)} | ${fmt.usdC(r.price)} | ${fmt.usd(r.value)} | ${fmt.pct(r.weight, 2)} | ${fmt.usdC(r.avgCost)} | ${fmt.spct(r.ret)} | ${r.purchaseDate || '?'} | ${S.stats[r.ticker]?.beta != null ? fmt.x(S.stats[r.ticker].beta) : '?'}`));
-  L.push('\n# Sector weights in the equity sleeve vs the S&P 500 (already compared for you — use these words)');
+  L.push('\n# Sector weights in our stocks vs the S&P 500 (already compared for you — use these words)');
   Object.keys(bw).sort((a, b) => ((c.sectors[a]?.wEq || 0) - bw[a]) - ((c.sectors[b]?.wEq || 0) - bw[b])).forEach((s) => L.push(`${s}: ${relWords(c.sectors[s]?.wEq || 0, bw[s])}`));
   if (S.hist) {
     const former = Object.values(S.hist.tickers).filter((t) => t.ticker !== 'SNOXX' && !t.periods.some((p) => !p.to));
@@ -2470,9 +2484,9 @@ async function scrappyAsk(q) {
 })();
 
 // ======================================================================
-// Performance tab — year-by-year returns by sleeve
+// Performance tab — year-by-year returns by group
 // ======================================================================
-const RV = { mode: store.get('rvMode', 'total'), chart: store.get('rvChart', 'years'), mix: store.get('rvMix', 'actual'), diff: store.get('rvDiff', false), labels: store.get('rvLabels', false), from: null, to: null, all: {}, loading: null };
+const RV = { mode: ['total', 'eq', 'fi', 'cash'].includes(store.get('rvMode', 'total')) ? store.get('rvMode', 'total') : 'total', chart: store.get('rvChart', 'years'), mix: store.get('rvMix', 'actual'), diff: store.get('rvDiff', false), labels: store.get('rvLabels', false), from: null, to: null, all: {}, loading: null };
 const AC_COLOR = () => ({ eq: C.gold, fi: C.blue, mm: C.violet, cash: C.gray });
 // four asset classes, always named and coloured the same way across the site
 function acSummary() {
@@ -2480,7 +2494,7 @@ function acSummary() {
   return [
     { k: 'eq', name: 'Equities', v: c.eqValue, what: `${c.nEquity} stocks`, note: 'Compared with the S&P 500' },
     { k: 'fi', name: 'Fixed income', v: c.fiValue, what: c.rows.filter((r) => r.assetClass === 'Fixed Income').map((r) => r.ticker).join(', ') || 'none', note: 'Bond ETFs · compared with the Bloomberg US Aggregate (AGG)' },
-    { k: 'mm', name: 'Money market', v: c.mmValue, what: c.rows.filter((r) => r.assetClass === 'Money Market').map((r) => r.ticker).join(', ') || 'none', note: 'Treasury money-market fund · cash-like, earns T-bill yield' },
+    { k: 'mm', name: 'Money market', v: c.mmValue, what: c.rows.filter((r) => r.assetClass === 'Money Market').map((r) => r.ticker).join(', ') || 'none', note: 'Treasury money-market fund · compared with T-bills (BIL)' },
     { k: 'cash', name: 'Cash', v: c.cash, what: 'Uninvested cash at Schwab', note: 'What Trade Lab buys are paid from' },
   ];
 }
@@ -2492,7 +2506,7 @@ async function loadAllHistory() {
   if (RV.loaded || !S.api || !S.hist) return;
   if (RV.loading) return RV.loading;
   const syms = Object.values(S.hist.tickers).filter((t) => assetClassOf(t.ticker, t.name, currentClasses()) !== 'Money Market').map((t) => t.ticker);
-  const need = [...new Set(['SPY', 'AGG', ...syms])];
+  const need = [...new Set(['SPY', 'AGG', 'BIL', ...syms])];
   RV.loading = (async () => {
     let done = 0;
     const chunks = []; for (let i = 0; i < need.length; i += 6) chunks.push(need.slice(i, i + 6));
@@ -2516,19 +2530,11 @@ function rvData() {
     RV.totalMissing = bt?.missing || [];
   }
   const ss = RV.ss;
-  const actual = RV.mix === 'actual';
-  const share = actual ? null : +RV.mix / 100;
   let weeks, label, bench, color;
-  if (RV.mode === 'total') { weeks = RV.total; label = 'Total fund'; bench = 'S&P 500 (SPY)'; color = C.gold; }
-  else if (RV.mode === 'eq') { weeks = viewWeeks(ss, 'eq'); label = 'Equities'; bench = 'S&P 500 (SPY)'; color = C.gold; }
+  if (RV.mode === 'eq') { weeks = viewWeeks(ss, 'eq'); label = 'Equities'; bench = 'S&P 500 (SPY)'; color = C.gold; }
   else if (RV.mode === 'fi') { weeks = viewWeeks(ss, 'fi'); label = 'Fixed income'; bench = 'Bloomberg US Agg (AGG)'; color = C.blue; }
-  else if (actual) { weeks = viewWeeks(ss, 'actual'); label = 'Equities + fixed income (actual mix)'; bench = 'SPY / AGG at the same mix'; color = C.violet; }
-  else {
-    weeks = share === 1 ? viewWeeks(ss, 'eq') : share === 0 ? viewWeeks(ss, 'fi') : viewWeeks(ss, 'mix', share);
-    label = share === 1 ? 'Equities' : share === 0 ? 'Fixed income' : `${Math.round(share * 100)}% equities / ${Math.round((1 - share) * 100)}% fixed income`;
-    bench = share === 1 ? 'S&P 500 (SPY)' : share === 0 ? 'Bloomberg US Agg (AGG)' : `${Math.round(share * 100)}% SPY + ${Math.round((1 - share) * 100)}% AGG`;
-    color = share === 1 ? C.gold : share === 0 ? C.blue : C.violet;
-  }
+  else if (RV.mode === 'cash') { weeks = viewWeeks(ss, 'cash'); label = 'Money market & cash'; bench = '1–3 month T-bills (BIL)'; color = C.violet; }
+  else { weeks = RV.total; label = 'SMIF (actual mix)'; bench = 'S&P 500 (SPY)'; color = C.gold; }
   return { weeks, label, bench, color, years: calendarYears(weeks), trailing: trailingPeriods(weeks) };
 }
 async function renderReturns() {
@@ -2551,15 +2557,8 @@ async function renderReturns() {
 function syncRvControls() {
   $$('#rvMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === RV.mode));
   $$('#rvChart button').forEach((b) => b.classList.toggle('on', b.dataset.v === RV.chart));
-  $('#rvMixRow').style.display = RV.mode === 'mix' ? '' : 'none';
   $('#rvYearsWrap').style.display = RV.chart === 'years' ? '' : 'none';
   $('#rvDiff').checked = RV.diff; $('#rvLabels').checked = RV.labels;
-  const actual = RV.mix === 'actual';
-  const eqShare = actual ? (calc.eqValue / (calc.eqValue + calc.fiValue || 1)) : +RV.mix / 100;
-  $('#rvMix').value = Math.round(eqShare * 100);
-  $('#rvMix').classList.toggle('actual', actual);
-  $('#rvEqPct').textContent = fmt.pct(eqShare, 0); $('#rvFiPct').textContent = fmt.pct(1 - eqShare, 0);
-  $$('.rv-presets [data-mix]').forEach((b) => b.classList.toggle('on', String(RV.mix) === b.dataset.mix));
 }
 function drawReturns() {
   const D = rvData();
@@ -2576,14 +2575,12 @@ function drawReturns() {
   const trail = D.trailing;
   const isYears = RV.chart === 'years';
   // benchmark line
-  const fiStart = RV.ss.fiStart;
   const notes = [];
-  if ((RV.mode === 'fi' || (RV.mode === 'mix' && RV.mix !== 'actual' && +RV.mix < 100)) && fiStart) notes.push(`SMIF has held bond ETFs since <b>${fdate(fiStart)}</b>.${RV.mode === 'mix' && +RV.mix > 0 ? ' Before that, the bond part of the mix uses AGG as a stand-in (marked ◇).' : ''}`);
-  if (RV.mode === 'fi' && !fiStart) notes.push('The fund has no fixed-income history yet.');
-  if (RV.mode === 'mix' && RV.mix !== 'actual') notes.push('A what-if: our equity and bond sleeves blended at this mix and rebalanced weekly, against the same mix of SPY and AGG.');
-  if (RV.mode === 'mix' && RV.mix === 'actual') notes.push('Our equities and bonds at the weights we really held each week. Cash and the money-market fund are left out.');
-  if (RV.mode === 'total') notes.push('Everything the fund owned, including cash and the money-market fund, so cash drag is part of the return.');
-  if (RV.mode === 'eq') notes.push('Stocks only. Cash, the money-market fund and bonds are left out.');
+  const t = calc.total;
+  if (RV.mode === 'total') notes.push(`Everything the fund owns, at the weights we actually held: today ${fmt.pct(calc.eqValue / t, 0)} equities, ${fmt.pct(calc.fiValue / t, 0)} fixed income, ${fmt.pct(calc.cashLike / t, 0)} money market &amp; cash. Compared with the S&amp;P 500, the fund's benchmark.`);
+  if (RV.mode === 'eq') notes.push('Only the stocks we held. Bonds, money market and cash are left out.');
+  if (RV.mode === 'fi') notes.push(RV.ss.fiStart ? `Only our bond ETFs. SMIF has held them since <b>${fdate(RV.ss.fiStart)}</b>, so this history starts there.` : 'The fund has no bond history yet.');
+  if (RV.mode === 'cash') notes.push('Uninvested cash plus the Treasury money-market fund. Its return is the interest and money-market dividends we received.');
   $('#rvBench').innerHTML = `<span><i class="ac-dot" style="background:${D.color}"></i><b>${esc(D.label)}</b> vs <i class="ac-dot" style="background:${C.grayLight}"></i><b>${esc(D.bench)}</b></span>${notes.map((n) => `<span class="rv-note">${n}</span>`).join('')}`;
   // tiles
   const full = years.filter((y) => !y.partial);
@@ -2594,13 +2591,13 @@ function drawReturns() {
   const ann = (g) => (span >= 1 ? Math.pow(g, 1 / span) - 1 : null);
   const tile = (k, v, s, t) => `<div class="card tile"><div class="label">${k} ${t ? tip(t) : ''}</div><div class="value num">${v}</div><div class="foot">${s}</div></div>`;
   $('#rvTiles').innerHTML = years.length ? [
-    tile(`Total, ${years[0].year}–${years[years.length - 1].year}`, `<span class="${cls(f - 1)}">${fmt.spct(f - 1)}</span>`, `Benchmark ${fmt.spct(b - 1)} · ${fmt.pts(f - b)}`, 'Growth over the years shown, chained week by week.'),
+    tile(`Total, ${years[0].year}–${years[years.length - 1].year}`, `<span class="${cls(f - 1)}">${fmt.spct(f - 1)}</span>`, `Benchmark ${fmt.spct(b - 1)} · difference ${fmt.spct(f - b)}`, 'Growth over the years shown, chained week by week.'),
     tile('Per year (annualized)', ann(f) != null ? `<span class="${cls(ann(f))}">${fmt.spct(ann(f))}</span>` : '—', ann(b) != null ? `Benchmark ${fmt.spct(ann(b))}` : 'Needs at least a year', 'The steady yearly rate that gives the same total.'),
     tile('Full years ahead of benchmark', full.length ? `${beat} of ${full.length}` : '—', full.length ? `${fmt.pct(beat / full.length, 0)} hit rate` : 'Only partial years so far', 'Partial first/last years are left out of this count.'),
     tile('Best / worst year', best ? `<span class="up">${fmt.spct(best.fund, 1)}</span> / <span class="${cls(worst.fund)}">${fmt.spct(worst.fund, 1)}</span>` : '—', best ? `${best.year} / ${worst.year}` : '', 'Calendar-year returns, partial years included.'),
   ].join('') : `<div class="card" style="grid-column:1/-1"><div class="empty"><b>No history for this view yet.</b>${RV.mode === 'fi' ? 'The fund hasn\'t held bond ETFs in the record.' : ''}</div></div>`;
   // chart
-  const modeName = { total: 'total portfolio', eq: 'equity sleeve', fi: 'fixed-income sleeve', mix: RV.mix === 'actual' ? 'equities + fixed income' : D.label.toLowerCase() }[RV.mode];
+  const modeName = { total: 'total portfolio', eq: 'equities', fi: 'fixed income', cash: 'money market & cash' }[RV.mode];
   $('#rvTitle').textContent = `${isYears ? 'Calendar years' : 'Trailing periods'} — ${modeName}`;
   $('#rvHint').textContent = isYears ? (years.some((y) => y.partial) ? 'faded bars are partial years' : '') : 'over 1 year = annualized';
   const cats = isYears ? years.map((y) => String(y.year)) : trail.filter((t) => t.fund != null).map((t) => t.label);
@@ -2625,9 +2622,9 @@ function drawReturns() {
       const f = val(r, 'fund'), bb = val(r, 'bench');
       let h = `<b>${isYears ? r.year : r.label}</b>${isYears && r.partial ? ` <span style="color:${C.muted}">(${fdate(r.from)} – ${fdate(r.to)})</span>` : !isYears && r.years >= 1 ? ` <span style="color:${C.muted}">per year</span>` : ''}<br>`;
       h += `<span style="color:${D.color}">●</span> ${esc(D.label)}: <b>${fmt.spct(f)}</b><br><span style="color:${C.grayLight}">●</span> ${esc(D.bench)}: <b>${fmt.spct(bb)}</b><br>`;
-      h += f - bb >= 0 ? `<span style="color:${C.up}">Ahead by ${fmt.pts(f - bb).replace('+', '')}</span>` : `<span style="color:${C.down}">Behind by ${fmt.pts(f - bb).replace('-', '').replace('−', '')}</span>`;
+      h += f - bb >= 0 ? `<span style="color:${C.up}">Ahead of the benchmark by ${fmt.pct(f - bb, 1)}</span>` : `<span style="color:${C.down}">Behind the benchmark by ${fmt.pct(bb - f, 1)}</span>`;
       if (isYears && r.proxyShare > 0) h += `<br><span style="color:${C.muted}">◇ bond part uses AGG for ${Math.round(r.proxyShare * 100)}% of the year</span>`;
-      if (isYears && r.coverage < 0.97) h += `<br><span style="color:${C.muted}">Price data covers ${fmt.pct(r.coverage, 0)} of this sleeve</span>`;
+      if (isYears && r.coverage < 0.97) h += `<br><span style="color:${C.muted}">Price data covers ${fmt.pct(r.coverage, 0)} of these holdings</span>`;
       return h;
     } },
     xAxis: { type: 'category', data: cats, ...axisCommon, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, color: C.ink2, fontSize: isMobile() ? 10 : 12, interval: 0, rotate: isMobile() && cats.length > 9 ? 45 : 0 } },
@@ -2640,7 +2637,7 @@ function drawReturns() {
     const f = val(r, 'fund'), bb = val(r, 'bench'), d = f - bb;
     const n = isYears ? [r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '', r.proxyShare > 0 ? `◇ AGG stand-in for bonds ${Math.round(r.proxyShare * 100)}% of the year` : '', r.coverage < 0.97 ? `prices for ${fmt.pct(r.coverage, 0)} of holdings` : ''].filter(Boolean).join(' · ')
       : `${r.years >= 1 ? 'Per year, ' : ''}since ${fdate(r.from)}`;
-    return `<tr><td><b>${isYears ? r.year : r.label}</b></td><td class="n ${cls(f)}">${fmt.spct(f)}</td><td class="n ${cls(bb)}">${fmt.spct(bb)}</td><td class="n ${cls(d)}">${fmt.pts(d)}</td><td style="color:var(--muted);font-size:12px">${n}</td></tr>`;
+    return `<tr><td><b>${isYears ? r.year : r.label}</b></td><td class="n ${cls(f)}">${fmt.spct(f)}</td><td class="n ${cls(bb)}">${fmt.spct(bb)}</td><td class="n ${cls(d)}">${fmt.spct(d)}</td><td style="color:var(--muted);font-size:12px">${n}</td></tr>`;
   }).join('');
   $('#tblYears').innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i && i < 4 ? 'n' : ''}" style="cursor:default">${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>`;
   $('#rvTableHint').textContent = RV.mode === 'total' && RV.totalMissing.length ? `${RV.totalMissing.length} old tickers have no Yahoo prices; they're held at their last trade price` : 'Time-weighted, dividends and interest included';
@@ -2649,15 +2646,13 @@ function drawReturns() {
 function acSplitHTML() {
   if (!calc) return '';
   const t = calc.total, A = acSummary();
-  const incl = { eq: ['Total fund', 'Equities', 'Equities + fixed income'], fi: ['Total fund', 'Fixed income', 'Equities + fixed income'], mm: ['Total fund'], cash: ['Total fund'] };
+  const incl = { eq: ['Actual mix', 'All equities'], fi: ['Actual mix', 'All fixed income'], mm: ['Actual mix', 'Money market & cash'], cash: ['Actual mix', 'Money market & cash'] };
   return A.map((a) => `<div class="ac-card ${a.k}"><div class="ac-top"><i class="ac-dot ${a.k}"></i><b>${a.name}</b><span class="num">${fmt.pct(a.v / t)}</span></div>
     <div class="ac-v num">${fmt.usd(a.v)}</div><div class="ac-what">${esc(a.what)}</div><div class="ac-note">${esc(a.note)}</div>
     <div class="ac-in">In: ${incl[a.k].map((x) => `<span class="tag">${x}</span>`).join(' ')}</div></div>`).join('');
 }
 seg('rvMode', 'rvModeTmp', () => { RV.mode = S.rvModeTmp; store.set('rvMode', RV.mode); syncRvControls(); if (RV.loaded) drawReturns(); });
 seg('rvChart', 'rvChartTmp', () => { RV.chart = S.rvChartTmp; store.set('rvChart', RV.chart); syncRvControls(); if (RV.loaded) drawReturns(); });
-$('#rvMix').addEventListener('input', (e) => { RV.mix = String(e.target.value); syncRvControls(); clearTimeout(RV.t); RV.t = setTimeout(() => { store.set('rvMix', RV.mix); if (RV.loaded) drawReturns(); }, 60); });
-$$('.rv-presets [data-mix]').forEach((b) => b.addEventListener('click', () => { RV.mix = b.dataset.mix; store.set('rvMix', RV.mix); syncRvControls(); if (RV.loaded) drawReturns(); }));
 $('#rvFrom').addEventListener('change', (e) => { RV.from = +e.target.value; drawReturns(); });
 $('#rvTo').addEventListener('change', (e) => { RV.to = +e.target.value; drawReturns(); });
 $('#rvDiff').addEventListener('change', (e) => { RV.diff = e.target.checked; store.set('rvDiff', RV.diff); if (RV.loaded) drawReturns(); });
@@ -2671,8 +2666,8 @@ $('#rvPng').addEventListener('click', () => {
 $('#rvCsv').addEventListener('click', () => {
   if (!RV.last) return;
   const { D, rows, isYears, val } = RV.last;
-  const lines = [[isYears ? 'Year' : 'Period', D.label, D.bench, 'Difference (pts)', 'Partial', 'From', 'To'].join(',')];
-  rows.forEach((r) => lines.push([isYears ? r.year : r.label, (val(r, 'fund') * 100).toFixed(2) + '%', (val(r, 'bench') * 100).toFixed(2) + '%', ((val(r, 'fund') - val(r, 'bench')) * 100).toFixed(2), isYears && r.partial ? 'yes' : '', r.from || '', r.to || ''].map((x) => `"${String(x).replace(/"/g, '""')}"`).join(',')));
+  const lines = [[isYears ? 'Year' : 'Period', D.label, D.bench, 'Difference', 'Partial', 'From', 'To'].join(',')];
+  rows.forEach((r) => lines.push([isYears ? r.year : r.label, (val(r, 'fund') * 100).toFixed(2) + '%', (val(r, 'bench') * 100).toFixed(2) + '%', ((val(r, 'fund') - val(r, 'bench')) * 100).toFixed(2) + '%', isYears && r.partial ? 'yes' : '', r.from || '', r.to || ''].map((x) => `"${String(x).replace(/"/g, '""')}"`).join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
   a.download = `SMIF ${$('#rvTitle').textContent.replace(/\s*—\s*/g, ' - ').replace(/[^\w %/+-]+/g, '').replace(/\//g, '-').trim()}.csv`; a.click();

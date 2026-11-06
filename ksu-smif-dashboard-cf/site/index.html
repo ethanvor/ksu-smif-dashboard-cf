@@ -74,6 +74,7 @@
   </div>
 
   <div class="grid g-4 mt" id="kpiTiles"></div>
+  <div class="ac-strip-slot mt" aria-label="How the fund is split"></div>
 
   <div class="grid g-21 mt">
     <div class="card">
@@ -102,7 +103,7 @@
 
   <div class="grid g-2 mt">
     <div class="card"><div class="card-head"><h2>Top 10 holdings</h2><span class="hint">Weight of total fund</span></div><div id="chTop10" class="chart"></div></div>
-    <div class="card"><div class="card-head"><h2>Sector weights vs S&amp;P 500</h2><span class="hint">Equity sleeve only</span></div><div id="chSectorOv" class="chart"></div></div>
+    <div class="card"><div class="card-head"><h2>Sector weights vs S&amp;P 500</h2><span class="hint">Stocks only</span></div><div id="chSectorOv" class="chart"></div></div>
   </div>
 </section>
 
@@ -112,25 +113,17 @@
     <div>
       <div class="eyebrow">Performance</div>
       <h1>Year by <em>year</em></h1>
-      <div class="sub">Calendar-year and trailing returns for the whole fund, the equity sleeve vs the S&amp;P 500, and the fixed-income sleeve vs the Bloomberg US Aggregate (AGG). Rebuilt week by week from the Schwab transaction history.</div>
+      <div class="sub">How the whole fund and each part of it did, year by year. Equities are compared with the S&amp;P 500, fixed income with the Bloomberg US Aggregate (AGG), and money market &amp; cash with 1–3 month T-bills (BIL). Rebuilt week by week from the Schwab transaction history.</div>
     </div>
   </div>
   <div class="card rv-controls">
     <div class="rv-row">
       <span class="rv-k">Show</span>
-      <div class="seg" id="rvMode">
-        <button data-v="total" class="on">Total fund</button>
-        <button data-v="eq"><i class="ac-dot eq"></i>Equities</button>
-        <button data-v="fi"><i class="ac-dot fi"></i>Fixed income</button>
-        <button data-v="mix"><i class="ac-dot eq"></i><i class="ac-dot fi"></i>Equities + fixed income</button>
-      </div>
-    </div>
-    <div class="rv-row" id="rvMixRow" style="display:none">
-      <span class="rv-k">Mix</span>
-      <div class="rv-slider">
-        <div class="rv-slider-labels"><span><i class="ac-dot eq"></i>Equities <b id="rvEqPct">90%</b></span><span>Fixed income <b id="rvFiPct">10%</b><i class="ac-dot fi"></i></span></div>
-        <input type="range" id="rvMix" min="0" max="100" step="5" value="90" aria-label="Share in equities" />
-        <div class="rv-presets"><button class="chip" data-mix="actual">Actual mix</button><button class="chip" data-mix="100">All equities</button><button class="chip" data-mix="80">80 / 20</button><button class="chip" data-mix="60">60 / 40</button><button class="chip" data-mix="0">All fixed income</button></div>
+      <div class="seg rv-mode" id="rvMode">
+        <button data-v="total" class="on"><i class="ac-dot eq"></i><i class="ac-dot fi"></i><i class="ac-dot mm"></i>Actual mix</button>
+        <button data-v="eq"><i class="ac-dot eq"></i>All equities</button>
+        <button data-v="fi"><i class="ac-dot fi"></i>All fixed income</button>
+        <button data-v="cash"><i class="ac-dot mm"></i><i class="ac-dot cash"></i>Money market &amp; cash</button>
       </div>
     </div>
     <div class="rv-row">
@@ -164,7 +157,7 @@
     <div>
       <div class="eyebrow">Current weighting</div>
       <h1>Where the money <em>sits</em></h1>
-      <div class="sub">Box size = how much of the fund is in that stock. Color = how it's done. Over/under-weight compares our equity sleeve to the S&amp;P 500's sector mix.</div>
+      <div class="sub">Box size = how much of the fund is in that stock. Color = how it's done. Over/under-weight compares our stocks to the S&amp;P 500's sector mix.</div>
     </div>
     <div class="row">
       <div class="seg" id="tmColor"><button data-v="ret" class="on">Color: return since buy</button><button data-v="day">Color: today</button></div>
@@ -253,7 +246,7 @@
   <div class="grid g-4 mt" id="histTiles"></div>
 
   <div class="card mt">
-    <div class="card-head"><div><h2>Former holdings</h2><div class="hint" style="margin-top:4px">Every stock the fund has owned and fully sold · tap a row for its full history</div></div>
+    <div class="card-head"><div><h2>Former holdings</h2><div class="hint" style="margin-top:4px">Every stock and bond fund the fund has owned and fully sold · tap a row for its full history</div></div>
       <input class="input" id="fhSearch" placeholder="Search…" style="max-width:200px" /></div>
     <div class="table-wrap"><table id="tblFormer"></table></div>
   </div>
@@ -294,7 +287,7 @@
         <div class="card-head"><h2>Impact on the portfolio</h2><span class="hint">Before → after every trade on the ticket</span></div>
         <div id="impact"><div class="empty">Add a mock trade to see the before/after.</div></div>
       </div>
-      <div class="card" id="simCard"><div class="card-head"><h2>Sector weights: now vs after trades</h2><span class="hint">Equity sleeve, with S&amp;P 500 for reference</span></div><div id="chSim" class="chart tall"></div></div>
+      <div class="card" id="simCard"><div class="card-head"><h2>Sector weights: now vs after trades</h2><span class="hint">Stocks, with S&amp;P 500 for reference</span></div><div id="chSim" class="chart tall"></div></div>
     </div>
     <div class="grid trade-panel" style="gap:18px">
       <div class="card" id="tradeCard">

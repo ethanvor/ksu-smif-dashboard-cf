@@ -465,7 +465,10 @@ export function sleeveSeries(hist, market, currentClasses = {}) {
   const i0 = Math.max(0, spy.dates.findIndex((d) => d >= start) - 1);
   const dates = spy.dates.slice(i0);
   const adjMap = (m) => (m?.dates?.length ? new Map(m.dates.map((d, i) => [d, m.closes[i]])) : null);
-  const spyM = adjMap(spy), aggM = adjMap(market.AGG);
+  const spyM = adjMap(spy), aggM = adjMap(market.AGG), bilM = adjMap(market.BIL);
+  const mmTick = Object.values(hist.tickers).filter((t) => assetClassOf(t.ticker, t.name, currentClasses) === 'Money Market');
+  const cashInc = hist.cashIncome || [];
+  const cashIncomeIn = (a, b) => { let x = 0; for (const [d, v] of cashInc) if (d > a && d <= b) x += v; return x; };
   const tick = Object.values(hist.tickers).map((t) => ({ t, cls: assetClassOf(t.ticker, t.name, currentClasses) })).filter((x) => x.cls !== 'Money Market');
   const P = {};
   tick.forEach(({ t }) => {
@@ -501,9 +504,12 @@ export function sleeveSeries(hist, market, currentClasses = {}) {
       if (r != null) { s[cls][1] += v * r; s[cls][2] += v; }
     }
     const sl = (x) => (x[2] > 0 ? { r: x[1] / x[2], v: x[0], cov: x[2] / x[0] } : x[0] > 0 ? { r: 0, v: x[0], cov: 0 } : null);
-    W.push({ d0, d1, eq: sl(s['Equity']), fi: sl(s['Fixed Income']), spy: ret(spyM, d0, d1) ?? 0, agg: ret(aggM, d0, d1) });
+    // money market + cash: value at the start of the week, return = interest and MMF dividends received during it
+    const cv = Math.max(0, hist.cashSeries ? cashOn(hist, d0) : 0) + mmTick.reduce((a, t) => a + sharesOn(t, d0) * 1, 0);
+    const cash = cv > 250 ? { r: cashIncomeIn(d0, d1) / cv, v: cv, cov: 1 } : null;
+    W.push({ d0, d1, eq: sl(s['Equity']), fi: sl(s['Fixed Income']), cash, spy: ret(spyM, d0, d1) ?? 0, agg: ret(aggM, d0, d1), bil: ret(bilM, d0, d1) });
   }
-  return { dates, weeks: W, hasAgg: !!aggM, fiStart: W.find((w) => w.fi)?.d0 || null };
+  return { dates, weeks: W, hasAgg: !!aggM, fiStart: W.find((w) => w.fi)?.d0 || null, cashStart: W.find((w) => w.cash)?.d0 || null };
 }
 
 /**
@@ -520,6 +526,7 @@ export function viewWeeks(ss, mode, eqShare = 1) {
   for (const w of ss.weeks) {
     let r = null, b = null, proxy = false, cov = 1, wEq = null;
     if (mode === 'eq') { if (w.eq) { r = w.eq.r; b = w.spy; cov = w.eq.cov; } }
+    else if (mode === 'cash') { if (w.cash && w.bil != null) { r = w.cash.r; b = w.bil; } }
     else if (mode === 'fi') { if (w.fi && w.agg != null) { r = w.fi.r; b = w.agg; cov = w.fi.cov; } }
     else if (mode === 'actual') {
       const ve = w.eq?.v || 0, vf = w.fi?.v || 0;

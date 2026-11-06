@@ -64,7 +64,11 @@ export function checkAnswer(text) {
   const l = t.toLowerCase();
   if (LEAK.some((x) => l.includes(x))) return REFUSAL;
   if (/\b(as an? (?:unrestricted|unfiltered|jailbroken)|dan:|developer mode (?:enabled|output))/i.test(t)) return REFUSAL;
-  return t.length > 6000 ? t.slice(0, 6000) + '…' : t;
+  // SMIF is tax-exempt: drop any line about tax consequences (keeps "pre-tax margin" and similar metrics)
+  const TAX = /(tax[- ](?:implication|consequence|loss|efficien|liabilit|treatment|benefit|bill|hit|drag|bracket|rate|harvest|advantage|impact|purpose|consideration)|capital[- ]gains? tax|wash[- ]sale|after[- ]tax return|taxable (?:gain|event|account)|tax(?:es)? (?:on|owed|due|would))/i;
+  const kept = t.split('\n').filter((ln) => !TAX.test(ln)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const out = kept || t;
+  return out.length > 6000 ? out.slice(0, 6000) + '…' : out;
 }
 
 export const OFF_TOPIC = "That's outside what I can help with. I'm Scrappy, the SMIF portfolio assistant, so I stick to the fund, the market, and investing. Try asking about our holdings, our trade history, or a stock you're considering.";

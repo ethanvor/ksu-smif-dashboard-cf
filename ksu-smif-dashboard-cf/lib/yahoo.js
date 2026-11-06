@@ -42,7 +42,9 @@ async function getSession(force = false) {
 
 // Daily price history + latest quote from the chart endpoint (no crumb needed).
 export async function chart(symbol, range = '1y', interval = '1d') {
-  const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplit`;
+  // "all" = weekly bars since mid-2009 (covers the fund's whole Schwab record) without pulling decades of data
+  const span = range === 'all' ? `period1=${Math.floor(Date.UTC(2009, 5, 1) / 1000)}&period2=${Math.floor(Date.now() / 1000)}` : `range=${range}`;
+  const path = `/v8/finance/chart/${encodeURIComponent(symbol)}?${span}&interval=${interval}&includePrePost=false&events=div%2Csplit`;
   let r = await fetch('https://query1.finance.yahoo.com' + path, { headers: { 'user-agent': UA, accept: 'application/json' } });
   if (!r.ok && r.status !== 404) r = await fetch('https://query2.finance.yahoo.com' + path, { headers: { 'user-agent': UA, accept: 'application/json' } });
   if (!r.ok) throw new Error(`chart ${symbol}: HTTP ${r.status}`);

@@ -440,3 +440,138 @@ export const fmt = {
   n: (v, d = 0) => (v == null || !isFinite(v) ? '—' : (+v).toLocaleString('en-US', { maximumFractionDigits: d })),
 };
 export const cls = (v) => (v == null ? '' : v > 0 ? 'up' : v < 0 ? 'down' : '');
+
+// ======================================================================
+// Sleeve returns (Performance tab): equities and fixed income measured separately, with
+// cash and the money-market fund left out. Weekly, time-weighted: each week's return comes from
+// what each sleeve held at the START of the week, so buys and sells never count as gains.
+// Prices: adjusted closes (dividends and bond interest reinvested), the same basis as SPY / AGG.
+// ======================================================================
+export const FI_TICKERS = new Set(['AGG', 'BND', 'TLT', 'IEF', 'IEI', 'SHY', 'LQD', 'HYG', 'TIP', 'VTIP', 'VGIT', 'VGSH', 'VGLT', 'BSV', 'BIV', 'BLV', 'SCHZ', 'SCHP', 'GOVT', 'MUB', 'VCIT', 'VCSH', 'SPAB', 'STIP', 'EMB', 'JNK', 'FLOT', 'SGOV', 'BIL', 'MBB', 'IGSB', 'IGIB', 'USIG']);
+export const MM_TICKERS = new Set(['SNOXX', 'SWVXX', 'SNVXX', 'SNSXX', 'SPAXX', 'VMFXX']);
+/** 'Equity' | 'Fixed Income' | 'Money Market' for any ticker the fund has held. */
+export function assetClassOf(ticker, name, current) {
+  const t = String(ticker || '').toUpperCase();
+  if (current?.[t]) return current[t];
+  if (MM_TICKERS.has(t) || /\b(mmf|money market|treas(ury)? obligation)\b/i.test(name || '')) return 'Money Market';
+  if (FI_TICKERS.has(t) || /\b(bond|treasury|treas|tips|infl[- ]?prot|aggregate|fixed income|intrmdiat|intermediate[- ]term|short[- ]term (?:corp|treas|bond)|muni)\b/i.test(name || '')) return 'Fixed Income';
+  return 'Equity';
+}
+
+export function sleeveSeries(hist, market, currentClasses = {}) {
+  const spy = market.SPY;
+  if (!hist || !spy?.dates?.length) return null;
+  const start = hist.from || spy.dates[0];
+  const i0 = Math.max(0, spy.dates.findIndex((d) => d >= start) - 1);
+  const dates = spy.dates.slice(i0);
+  const adjMap = (m) => (m?.dates?.length ? new Map(m.dates.map((d, i) => [d, m.closes[i]])) : null);
+  const spyM = adjMap(spy), aggM = adjMap(market.AGG);
+  const tick = Object.values(hist.tickers).map((t) => ({ t, cls: assetClassOf(t.ticker, t.name, currentClasses) })).filter((x) => x.cls !== 'Money Market');
+  const P = {};
+  tick.forEach(({ t }) => {
+    const m = market[t.ticker];
+    if (m?.dates?.length) P[t.ticker] = { adj: adjMap(m), raw: new Map(m.dates.map((d, i) => [d, (m.rawCloses || m.closes)[i]])), splits: m.splits || [] };
+  });
+  const lastRaw = {};
+  const rawOn = (t, d) => {
+    const v = P[t.ticker]?.raw.get(d);
+    if (v != null) return (lastRaw[t.ticker] = { px: v, adj: true });
+    if (lastRaw[t.ticker]) return lastRaw[t.ticker];
+    const tp = [...t.trades].reverse().find((x) => x.date <= d && x.price)?.price ?? t.trades.find((x) => x.price)?.price;
+    return tp != null ? { px: tp, adj: false } : null;
+  };
+  const shares = (t, d, adj) => {
+    let q = sharesOn(t, d);
+    if (q && adj) for (const [sd, ratio] of P[t.ticker]?.splits || []) if (sd > d) q *= ratio;
+    return q;
+  };
+  const ret = (m, d0, d1) => { const a = m?.get(d0), b = m?.get(d1); return a && b ? b / a - 1 : null; };
+  const W = []; // one entry per week
+  for (let k = 1; k < dates.length; k++) {
+    const d0 = dates[k - 1], d1 = dates[k];
+    const s = { 'Equity': [0, 0, 0], 'Fixed Income': [0, 0, 0] }; // [value, value × return, value with real prices]
+    for (const { t, cls } of tick) {
+      if (!sharesOn(t, d0)) continue;
+      const p = rawOn(t, d0);
+      if (!p) continue;
+      const v = shares(t, d0, p.adj) * p.px;
+      if (!(v > 0)) continue;
+      const r = p.adj ? ret(P[t.ticker]?.adj, d0, d1) : null;
+      s[cls][0] += v;
+      if (r != null) { s[cls][1] += v * r; s[cls][2] += v; }
+    }
+    const sl = (x) => (x[2] > 0 ? { r: x[1] / x[2], v: x[0], cov: x[2] / x[0] } : x[0] > 0 ? { r: 0, v: x[0], cov: 0 } : null);
+    W.push({ d0, d1, eq: sl(s['Equity']), fi: sl(s['Fixed Income']), spy: ret(spyM, d0, d1) ?? 0, agg: ret(aggM, d0, d1) });
+  }
+  return { dates, weeks: W, hasAgg: !!aggM, fiStart: W.find((w) => w.fi)?.d0 || null };
+}
+
+/**
+ * Weekly returns for one "view" of the fund.
+ *  mode 'eq'  : equity sleeve vs S&P 500 (SPY)
+ *  mode 'fi'  : fixed-income sleeve vs Bloomberg US Aggregate (AGG)
+ *  mode 'mix' : eqShare of our equities + the rest in our fixed income, rebalanced weekly, vs the same SPY/AGG mix.
+ *               Weeks before the fund held bonds use AGG for the bond part (flagged as "proxy").
+ *  mode 'actual' : equities + fixed income at the weights we actually held (cash & money market left out),
+ *                  vs SPY/AGG at those same weights.
+ */
+export function viewWeeks(ss, mode, eqShare = 1) {
+  const out = [];
+  for (const w of ss.weeks) {
+    let r = null, b = null, proxy = false, cov = 1, wEq = null;
+    if (mode === 'eq') { if (w.eq) { r = w.eq.r; b = w.spy; cov = w.eq.cov; } }
+    else if (mode === 'fi') { if (w.fi && w.agg != null) { r = w.fi.r; b = w.agg; cov = w.fi.cov; } }
+    else if (mode === 'actual') {
+      const ve = w.eq?.v || 0, vf = w.fi?.v || 0;
+      if (ve + vf > 0) {
+        wEq = ve / (ve + vf);
+        r = wEq * (w.eq?.r || 0) + (1 - wEq) * (w.fi?.r || 0);
+        b = wEq * w.spy + (1 - wEq) * (w.agg ?? 0);
+        cov = (ve * (w.eq?.cov ?? 1) + vf * (w.fi?.cov ?? 1)) / (ve + vf);
+      }
+    } else if (mode === 'mix') {
+      const fiR = w.fi ? w.fi.r : w.agg;
+      proxy = !w.fi && eqShare < 1;
+      if (w.eq && (fiR != null || eqShare === 1) && (w.agg != null || eqShare === 1)) {
+        r = eqShare * w.eq.r + (1 - eqShare) * (fiR ?? 0);
+        b = eqShare * w.spy + (1 - eqShare) * (w.agg ?? 0);
+        cov = w.eq.cov;
+      }
+    }
+    out.push({ d0: w.d0, d1: w.d1, r, b, proxy, cov, wEq });
+  }
+  return out;
+}
+
+/** Calendar-year returns from weekly returns. Partial = the view didn't cover the whole year. */
+export function calendarYears(weeks) {
+  const by = new Map();
+  for (const w of weeks) {
+    if (w.r == null) continue;
+    const y = +w.d1.slice(0, 4);
+    const e = by.get(y) || { year: y, f: 1, b: 1, n: 0, proxy: 0, cov: 0, first: w.d0, last: w.d1 };
+    e.f *= 1 + w.r; e.b *= 1 + w.b; e.n++; e.proxy += w.proxy ? 1 : 0; e.cov += w.cov; e.last = w.d1;
+    by.set(y, e);
+  }
+  return [...by.values()].sort((a, b) => a.year - b.year).map((e) => ({
+    year: e.year, fund: e.f - 1, bench: e.b - 1, diff: e.f - e.b, weeks: e.n, from: e.first, to: e.last,
+    partial: e.first > `${e.year}-01-08` || e.last < `${e.year}-12-24`, proxyShare: e.proxy / e.n, coverage: e.cov / e.n,
+  }));
+}
+
+/** Trailing-period returns (1M … since start) from weekly returns. */
+export function trailingPeriods(weeks, today = new Date()) {
+  const have = weeks.filter((w) => w.r != null);
+  if (!have.length) return [];
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const back = (m) => { const d = new Date(today); d.setMonth(d.getMonth() - m); return iso(d); };
+  const defs = [['1M', back(1)], ['3M', back(3)], ['6M', back(6)], ['YTD', `${today.getFullYear() - 1}-12-31`], ['1Y', back(12)], ['3Y', back(36)], ['5Y', back(60)], ['10Y', back(120)], ['Since start', have[0].d0]];
+  return defs.map(([label, from]) => {
+    const ws = have.filter((w) => w.d0 >= from);
+    if (!ws.length || (label !== 'Since start' && have[0].d0 > from)) return { label, fund: null, bench: null };
+    let f = 1, b = 1; ws.forEach((w) => { f *= 1 + w.r; b *= 1 + w.b; });
+    const yrs = (new Date(ws[ws.length - 1].d1) - new Date(ws[0].d0)) / (365.25 * 864e5);
+    const ann = (g) => (yrs >= 1 ? Math.pow(g, 1 / yrs) - 1 : null);
+    return { label, from: ws[0].d0, fund: f - 1, bench: b - 1, diff: f - b, fundAnn: ann(f), benchAnn: ann(b), years: yrs };
+  });
+}

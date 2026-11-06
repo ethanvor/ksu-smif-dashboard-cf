@@ -1,10 +1,11 @@
 // GET /api/market?symbols=AAPL,MSFT,SPY&range=1y              (daily)
 // GET /api/market?symbols=AAPL,SPY&range=10y&interval=1wk     (weekly, for 3Y/5Y/10Y charts)
+// GET /api/market?symbols=AAPL,AGG&range=all&interval=1wk     (weekly since 2009, for the Performance tab)
 // Cloudflare Pages Function. Responses are cached at Cloudflare's edge for 5 minutes,
 // so many analysts opening the site at once only reach Yahoo once.
 import { chart, cleanSymbol, json, pool } from '../../lib/yahoo.js';
 
-const RANGES = new Set(['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd']);
+const RANGES = new Set(['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'all']); // all = since 2009, weekly
 
 export async function onRequestGet({ request, waitUntil }) {
   const u = new URL(request.url);

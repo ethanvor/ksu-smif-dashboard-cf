@@ -104,14 +104,30 @@ const Y = {
   'REIT - Mortgage': 'Mortgage Real Estate Investment Trusts (REITs)', 'Real Estate Services': 'Real Estate Management & Development',
   'Real Estate - Development': 'Real Estate Management & Development', 'Real Estate - Diversified': 'Real Estate Management & Development',
 };
-// Returns { sector, industry, source } — source is 'fund' (workbook GICS), 'mapped' (from Yahoo) or null
-export function gicsFor(held, prof, fallbackSector) {
+// Known cases where Yahoo's category points to a different GICS industry than S&P uses.
+const OVERRIDE = {
+  UBER: 'Ground Transportation', LYFT: 'Ground Transportation', DASH: 'Hotels, Restaurants & Leisure', ABNB: 'Hotels, Restaurants & Leisure',
+  BKNG: 'Hotels, Restaurants & Leisure', EXPE: 'Hotels, Restaurants & Leisure', GOOGL: 'Interactive Media & Services', GOOG: 'Interactive Media & Services',
+  META: 'Interactive Media & Services', AMZN: 'Broadline Retail', V: 'Financial Services', MA: 'Financial Services', PYPL: 'Financial Services',
+  NFLX: 'Entertainment', TSLA: 'Automobiles', 'BRK.B': 'Financial Services', 'BRK-B': 'Financial Services', COST: 'Consumer Staples Distribution & Retail',
+  WMT: 'Consumer Staples Distribution & Retail', HD: 'Specialty Retail', LOW: 'Specialty Retail', NKE: 'Textiles, Apparel & Luxury Goods',
+};
+// Returns { sector, industry, source } — source is 'fund' (workbook GICS), 'spx' (S&P constituent list), 'mapped' (from Yahoo) or null.
+// spxSector: the official GICS sector from the fund's S&P 500 constituent list, when the stock is in the index.
+export function gicsFor(held, prof, fallbackSector, spxSector, ticker) {
   if (held && held.assetClass === 'Equity' && held.industry) {
     const industry = fullIndustry(held.industry);
     return { sector: held.sector || sectorOfIndustry(industry), industry, source: 'fund' };
   }
+  const t = String(ticker || held?.ticker || prof?.symbol || '').toUpperCase();
   const yi = prof?.industry;
-  const industry = yi && Y[yi];
-  if (industry) return { sector: SECTOR_OF[industry], industry, source: 'mapped', yahoo: yi };
+  let industry = OVERRIDE[t] || (yi && Y[yi]) || '';
+  let sector = industry ? SECTOR_OF[industry] : null;
+  if (spxSector) {
+    // the S&P list is the authority on the sector; drop a mapped industry that disagrees with it
+    if (sector && sector !== spxSector) industry = '';
+    return { sector: spxSector, industry, source: 'spx', yahoo: yi || '' };
+  }
+  if (industry) return { sector, industry, source: OVERRIDE[t] ? 'spx' : 'mapped', yahoo: yi };
   return { sector: fallbackSector || null, industry: '', source: yi ? 'unmapped' : null, yahoo: yi || '' };
 }

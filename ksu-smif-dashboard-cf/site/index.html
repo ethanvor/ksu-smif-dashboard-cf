@@ -11,6 +11,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Source+Serif+4:ital,wght@1,600&display=swap" rel="stylesheet" />
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("smif.theme")||"dark"}catch(e){}</script>
 <link rel="stylesheet" href="css/app.css" />
 <script src="vendor/echarts.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
@@ -28,6 +29,7 @@
     </a>
     <nav class="tabs" id="tabs" aria-label="Dashboard sections">
       <button data-view="overview" class="active"><span class="l">Overview</span><span class="s">Overview</span></button>
+      <button data-view="returns"><span class="l">Performance</span><span class="s">Perform.</span></button>
       <button data-view="allocation"><span class="l">Weighting</span><span class="s">Weights</span></button>
       <button data-view="performance"><span class="l">Gain Since Buy</span><span class="s">Gains</span></button>
       <button data-view="risk"><span class="l">Risk</span><span class="s">Risk</span></button>
@@ -37,7 +39,8 @@
     </nav>
     <div class="top-right">
       <span class="pill snap" id="statusPill"><span class="dot"></span><span id="statusText">Loading…</span></span>
-      <button class="btn sm" id="refreshBtn" title="Refresh live prices">↻ Refresh</button>
+      <button class="btn sm theme-btn" id="themeBtn" title="Switch to light mode" aria-label="Switch to light mode">☀</button>
+      <button class="btn sm" id="refreshBtn" title="Refresh live prices" aria-label="Refresh live prices">↻<span class="lbl"> Refresh</span></button>
     </div>
   </div>
   <div class="tape" id="tape" aria-label="Holdings ticker"><div class="tape-track" id="tapeTrack"></div></div>
@@ -52,6 +55,8 @@
         <img src="img/ks.svg" alt="" width="58" height="55" />
         <div><b>KENNESAW STATE</b><b class="u">UNIVERSITY</b><span>COLES COLLEGE OF BUSINESS</span><em>Student Managed Investment Fund</em></div>
       </div>
+      <a class="ksu-badge" href="https://campus.kennesaw.edu/colleges-departments/coles/academics/economics/student-managed-investment-fund/index.php" target="_blank" rel="noopener">
+        <img src="img/owl.svg" alt="" /><span><small>Official program page</small>KSU Student Managed Investment Fund</span><i aria-hidden="true">↗</i></a>
       <h1>Portfolio <em>overview</em></h1>
       <div class="sub" id="ovSub">The whole fund on one page — value, today's move, what we own and how it's spread out.</div>
     </div>
@@ -101,6 +106,58 @@
   </div>
 </section>
 
+<!-- ================= PERFORMANCE (year by year) ================= -->
+<section class="view" id="view-returns">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Performance</div>
+      <h1>Year by <em>year</em></h1>
+      <div class="sub">Calendar-year and trailing returns for the whole fund, the equity sleeve vs the S&amp;P 500, and the fixed-income sleeve vs the Bloomberg US Aggregate (AGG). Rebuilt week by week from the Schwab transaction history.</div>
+    </div>
+  </div>
+  <div class="card rv-controls">
+    <div class="rv-row">
+      <span class="rv-k">Show</span>
+      <div class="seg" id="rvMode">
+        <button data-v="total" class="on">Total fund</button>
+        <button data-v="eq"><i class="ac-dot eq"></i>Equities</button>
+        <button data-v="fi"><i class="ac-dot fi"></i>Fixed income</button>
+        <button data-v="mix"><i class="ac-dot eq"></i><i class="ac-dot fi"></i>Equities + fixed income</button>
+      </div>
+    </div>
+    <div class="rv-row" id="rvMixRow" style="display:none">
+      <span class="rv-k">Mix</span>
+      <div class="rv-slider">
+        <div class="rv-slider-labels"><span><i class="ac-dot eq"></i>Equities <b id="rvEqPct">90%</b></span><span>Fixed income <b id="rvFiPct">10%</b><i class="ac-dot fi"></i></span></div>
+        <input type="range" id="rvMix" min="0" max="100" step="5" value="90" aria-label="Share in equities" />
+        <div class="rv-presets"><button class="chip" data-mix="actual">Actual mix</button><button class="chip" data-mix="100">All equities</button><button class="chip" data-mix="80">80 / 20</button><button class="chip" data-mix="60">60 / 40</button><button class="chip" data-mix="0">All fixed income</button></div>
+      </div>
+    </div>
+    <div class="rv-row">
+      <span class="rv-k">Chart</span>
+      <div class="seg" id="rvChart"><button data-v="years" class="on">Calendar years</button><button data-v="trailing">Trailing periods</button></div>
+      <span class="rv-years" id="rvYearsWrap">from <select class="input" id="rvFrom"></select> to <select class="input" id="rvTo"></select></span>
+      <label class="switch"><input type="checkbox" id="rvDiff" /><span class="track"><i></i></span>Difference bars</label>
+      <label class="switch"><input type="checkbox" id="rvLabels" /><span class="track"><i></i></span>Values on bars</label>
+      <span class="rv-dl"><button class="btn sm" id="rvPng">⬇ PNG</button><button class="btn sm" id="rvCsv">⬇ CSV</button></span>
+    </div>
+    <div class="rv-bench" id="rvBench"></div>
+  </div>
+  <div class="grid g-4 mt" id="rvTiles"></div>
+  <div class="card mt">
+    <div class="card-head"><h2 id="rvTitle" class="rv-title">Calendar years — total portfolio</h2><span class="hint" id="rvHint">the first and last years are partial</span></div>
+    <div id="chYears" class="chart tall"></div>
+  </div>
+  <div class="card mt">
+    <div class="card-head"><h2>The numbers</h2><span class="hint" id="rvTableHint"></span></div>
+    <div class="table-wrap"><table id="tblYears"></table></div>
+  </div>
+  <div class="card mt">
+    <div class="card-head"><h2>How the fund is split</h2><span class="hint">What each view includes</span></div>
+    <div id="rvSplit" class="ac-split"></div>
+  </div>
+</section>
+
 <!-- ================= ALLOCATION ================= -->
 <section class="view" id="view-allocation">
   <div class="page-head">
@@ -113,6 +170,7 @@
       <div class="seg" id="tmColor"><button data-v="ret" class="on">Color: return since buy</button><button data-v="day">Color: today</button></div>
     </div>
   </div>
+  <div class="ac-strip-slot" aria-label="How the fund is split"></div>
   <div class="card"><div id="chTreemap" class="chart xl"></div></div>
   <div class="grid g-2 mt">
     <div class="card">
@@ -139,8 +197,9 @@
       <h1>How each pick has <em>performed</em></h1>
       <div class="sub">Return since our average purchase price. "Annualized" spreads that gain over how long we've held it, so a 20% gain in 3 months and a 20% gain in 10 years don't look the same.</div>
     </div>
-    <div class="seg" id="perfMode"><button data-v="ret" class="on">% return</button><button data-v="gl">$ gain/loss</button><button data-v="ann">Annualized</button></div>
+    <div class="row"><div class="seg" id="perfClass"><button data-v="all" class="on">All</button><button data-v="eq"><i class="ac-dot eq"></i>Equities</button><button data-v="fi"><i class="ac-dot fi"></i>Fixed income</button></div><div class="seg" id="perfMode"><button data-v="ret" class="on">% return</button><button data-v="gl">$ gain/loss</button><button data-v="ann">Annualized</button></div></div>
   </div>
+  <div class="ac-strip-slot" aria-label="How the fund is split"></div>
   <div class="grid g-4" id="perfTiles"></div>
   <div class="card mt"><div class="card-head"><h2 id="perfBarTitle">Return since purchase</h2><span class="hint">Sorted best to worst</span></div><div id="chPerfBar" class="chart tall"></div></div>
   <div class="grid g-2 mt">
@@ -155,11 +214,12 @@
     <div>
       <div class="eyebrow">Risk analytics</div>
       <h1>Risk &amp; <em>reward</em></h1>
-      <div class="sub">Calculated from one year of daily prices, using today's holdings. Tap or hover the ⓘ icons for plain-English definitions.</div>
+      <div class="sub">Calculated from one year of daily prices, using today's holdings. Fund-level numbers cover everything we own: stocks, bond ETFs, and cash and the money-market fund (which barely move, so they lower risk). Tap or hover the ⓘ icons for plain-English definitions.</div>
     </div>
     <label class="field" style="min-width:170px">Risk-free rate (annual %)
       <input class="input" id="rfInput" type="number" step="0.05" min="0" max="15" /></label>
   </div>
+  <div class="ac-strip-slot" aria-label="How the fund is split"></div>
   <div class="grid g-4" id="riskTiles"></div>
   <div class="grid g-2 mt">
     <div class="card"><div class="card-head"><h2>Risk vs return (1 year)</h2><span class="hint">Up and to the left is best</span></div><div id="chRiskRet" class="chart tall"></div></div>
@@ -182,10 +242,12 @@
     </div>
     <div class="row">
       <input class="input" id="hSearch" placeholder="Search ticker or name…" />
+      <select class="input" id="hClass"><option value="">All asset classes</option><option>Equity</option><option>Fixed Income</option><option>Money Market</option></select>
       <select class="input" id="hSector"><option value="">All sectors</option></select>
       <button class="btn" id="hExport">⬇ Export Excel</button>
     </div>
   </div>
+  <div class="ac-strip-slot" aria-label="How the fund is split"></div>
   <div class="card"><div class="table-wrap" style="max-height:none"><table id="tblHoldings"></table></div></div>
 
   <div class="grid g-4 mt" id="histTiles"></div>
@@ -316,7 +378,7 @@
   </div>
 </section>
 </main>
-<footer><img src="img/owl.svg" alt="" class="foot-owl" /><br>KSU Student Managed Investment Fund · Market data from Yahoo Finance (delayed, for education only — not investment advice).<br><span id="footMeta"></span></footer>
+<footer><img src="img/owl.svg" alt="" class="foot-owl" /><br><a href="https://campus.kennesaw.edu/colleges-departments/coles/academics/economics/student-managed-investment-fund/index.php" target="_blank" rel="noopener">KSU Student Managed Investment Fund ↗</a> · Market data from Yahoo Finance (delayed, for education only — not investment advice).<br><span id="footMeta"></span></footer>
 </div>
 
 <div class="splash" id="splash"><img src="img/owl.svg" alt="" /><div class="splash-bar"><i></i></div><span>Loading the SMIF portfolio…</span></div>

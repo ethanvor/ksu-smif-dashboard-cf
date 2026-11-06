@@ -2,7 +2,7 @@
 import { gicsFor, fullIndustry } from './gics.js';
 import {
   computePortfolio, symbolStats, portfolioStats, windowBacktest, windowAsHeld, actualBacktest, applyTrades, periodReturns, weightedBeta,
-  fmt, cls, toGics, SECTORS, CASH_LIKE,
+  fmt, cls, toGics, SECTORS, CASH_LIKE, sleeveSeries, viewWeeks, calendarYears, trailingPeriods, assetClassOf,
 } from './analytics.js';
 import { buildHistory, rowsFromSheet, looksLikeTransactions, heldSince, sharesOn } from './history.js';
 
@@ -88,11 +88,17 @@ async function getJSON(url, opts = {}, ms = 20000) {
 // ======================================================================
 // Charts (ECharts) — shared dark/KSU styling
 // ======================================================================
-const C = {
-  gold: '#FFC629', goldDim: 'rgba(255,198,41,0.25)', gray: '#8e8c88', grayLight: '#b2b4b2',
-  up: '#3ccf7f', down: '#f0625a', blue: '#3987e5', violet: '#9085e9', orange: '#d95926',
-  ink: '#f2f0ea', ink2: '#c9c6bd', muted: '#8e8a82', grid: 'rgba(255,255,255,0.07)', axis: 'rgba(255,255,255,0.18)',
+const THEME_COLORS = {
+  dark: { gold: '#FFC629', goldDim: 'rgba(255,198,41,0.25)', gray: '#8e8c88', grayLight: '#b2b4b2',
+    up: '#3ccf7f', down: '#f0625a', blue: '#3987e5', violet: '#9085e9', orange: '#d95926',
+    ink: '#f2f0ea', ink2: '#c9c6bd', muted: '#8e8a82', grid: 'rgba(255,255,255,0.07)', axis: 'rgba(255,255,255,0.18)',
+    surface: '#181614', page: '#0c0b0a', goldText: '#FFC629', tile: '#3a3835', pop: '#1f1c19', wash: 'rgba(255,255,255,0.04)', line: 'rgba(255,255,255,0.08)' },
+  light: { gold: '#E3A500', goldDim: 'rgba(227,165,0,0.25)', gray: '#8a8783', grayLight: '#7c7f7c',
+    up: '#11804a', down: '#c8372e', blue: '#2f6fc4', violet: '#6f62d6', orange: '#c24e1d',
+    ink: '#1d1a17', ink2: '#4a4540', muted: '#77716a', grid: 'rgba(45,41,38,0.08)', axis: 'rgba(45,41,38,0.25)',
+    surface: '#ffffff', page: '#ffffff', goldText: '#8a6200', tile: '#e9e5dc', pop: '#ffffff', wash: 'rgba(45,41,38,0.04)', line: 'rgba(45,41,38,0.12)' },
 };
+const C = { ...THEME_COLORS.dark };
 const charts = {};
 function chart(id) {
   const el = document.getElementById(id);
@@ -112,6 +118,23 @@ const axisCommon = {
   axisLabel: { color: C.muted, fontFamily: 'Montserrat, system-ui', fontSize: 11 },
   splitLine: { lineStyle: { color: C.grid } },
 };
+// ---------- light / dark mode ----------
+function applyTheme(t) {
+  t = t === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  Object.assign(C, THEME_COLORS[t]);
+  tooltipBase.backgroundColor = C.pop;
+  tooltipBase.borderColor = t === 'light' ? 'rgba(196,146,0,0.45)' : 'rgba(255,198,41,0.35)';
+  tooltipBase.textStyle.color = C.ink;
+  tooltipBase.extraCssText = tooltipBase.extraCssText.replace(/box-shadow:[^;]*;/, `box-shadow:0 10px 30px rgba(0,0,0,${t === 'light' ? '.15' : '.5'});`);
+  axisCommon.axisLine.lineStyle.color = C.axis;
+  axisCommon.axisLabel.color = C.muted;
+  axisCommon.splitLine.lineStyle.color = C.grid;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t === 'light' ? '#f5f3ee' : '#0c0b0a');
+  const b = document.getElementById('themeBtn');
+  if (b) { b.textContent = t === 'light' ? '☾' : '☀'; b.title = t === 'light' ? 'Switch to dark mode' : 'Switch to light mode'; b.setAttribute('aria-label', b.title); }
+}
+applyTheme(localStorage.getItem('smif.theme') || document.documentElement.dataset.theme || 'dark');
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 const SHORT = { 'Information Technology': 'Info Tech', 'Communication Services': 'Comm. Services', 'Consumer Discretionary': 'Cons. Disc.', 'Consumer Staples': 'Cons. Staples', 'Health Care': 'Health Care', 'Fixed Income': 'Fixed Income', 'Money Market': 'Money Mkt' };
 const shortName = (v) => (isMobile() ? SHORT[v] || v : v);
@@ -286,7 +309,7 @@ function renderOverview() {
     tooltip: { ...tooltipBase, trigger: 'item', formatter: (p) => `<b>${p.name}</b><br>${fmt.usd(p.value)} · ${p.percent.toFixed(1)}%` },
     legend: { show: true, orient: 'vertical', right: 0, top: 'middle', textStyle: { color: C.ink2 }, itemWidth: 10, itemHeight: 10, icon: 'roundRect',
       formatter: (n) => { const d = mix.find((x) => x.name === n); return `${n}  ${fmt.pct(d.value / c.total)}`; } },
-    series: [{ type: 'pie', radius: ['55%', '82%'], center: ['32%', '50%'], padAngle: 2, itemStyle: { borderRadius: 6, borderColor: '#181614', borderWidth: 2 },
+    series: [{ type: 'pie', radius: ['55%', '82%'], center: ['32%', '50%'], padAngle: 2, itemStyle: { borderRadius: 6, borderColor: C.surface, borderWidth: 2 },
       label: { show: false }, data: mix }],
   });
 
@@ -294,7 +317,7 @@ function renderOverview() {
   const ps = S.pstats;
   const tiles = [
     ['Equity weight', fmt.pct(c.eqValue / c.total), `${c.nEquity} stocks · ${fmt.usd(c.eqValue)}`, 'Share of the fund invested in individual stocks.'],
-    ['Cash & money market', fmt.pct(c.cashLike / c.total), `${fmt.usd(c.cashLike)} available to deploy`, 'Uninvested cash plus the Treasury money-market fund (SNOXX). Trade Lab buys are paid from cash only.'],
+    ['Fixed income & cash', fmt.pct((c.fiValue + c.cashLike) / c.total), `${fmt.usd(c.fiValue)} bonds · ${fmt.usd(c.cashLike)} available to deploy`, `Everything that isn't a stock: bond ETFs (${fmt.usd(c.fiValue)}), the Treasury money-market fund SNOXX (${fmt.usd(c.mmValue)}) and cash (${fmt.usd(c.cash)}). "Available to deploy" is cash plus the money-market fund. Trade Lab buys are paid from cash only.`],
     ['Portfolio beta', ps ? fmt.x(ps.beta) : '—', ps ? 'vs S&P 500, 1-year daily' : 'Needs live data', 'How much the fund tends to move when the S&P 500 moves 1%. 1.0 = same as the market; 0.8 = 20% calmer.'],
     ['Sharpe ratio', ps ? fmt.x(ps.sharpe) : '—', ps ? `S&P 500: ${fmt.x(ps.benchStats?.sharpe)}` : 'Needs live data', 'Return earned above the risk-free rate per unit of volatility. Higher is better; above 1 is strong.'],
   ];
@@ -454,15 +477,15 @@ function drawPerf(fresh) {
   $$('#perfView button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.perfView));
   perfStatsHTML(bt, s, e);
   const pctAxis = gapView ? { ...axisCommon.axisLabel, formatter: (v) => `${v > 0 ? '+' : ''}${v} pts` } : axisCommon.axisLabel;
-  const zeroLine = { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: 'rgba(255,255,255,.28)', type: 'solid', width: 1 }, data: [{ yAxis: 0 }] };
+  const zeroLine = { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: C.axis, type: 'solid', width: 1 }, data: [{ yAxis: 0 }] };
   const tradeLines = marks.length && S.showTrades ? marks : [];
   const tooltip = { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: C.gold, opacity: 0.5 } },
     formatter: (p) => {
       const d = p[0].axisValue, i = bt.dates.indexOf(d), { D, s } = S.perfD;
-      let h = `<b>${fdate(d)}</b><span style="color:#8e8a82"> · since ${fdate(bt.dates[s])}</span><br>`;
+      let h = `<b>${fdate(d)}</b><span style="color:${C.muted}"> · since ${fdate(bt.dates[s])}</span><br>`;
       h += `<span style="color:${C.gold}">●</span> SMIF: ${fmt.spct(D.sm[i] / 100 - 1)}<br><span style="color:${C.grayLight}">●</span> S&amp;P 500: ${fmt.spct(D.sp[i] / 100 - 1)}<br>`;
       h += D.gap[i] >= 0 ? `<span style="color:#3ccf7f">SMIF ahead by ${D.gap[i].toFixed(1)} pts</span>` : `<span style="color:#f0625a">SMIF behind by ${(-D.gap[i]).toFixed(1)} pts</span>`;
-      if (bt.actual && i >= 0) h += `<br><span style="color:#8e8a82">Fund value: ${fmt.usd(bt.values[i])}</span>`;
+      if (bt.actual && i >= 0) h += `<br><span style="color:${C.muted}">Fund value: ${fmt.usd(bt.values[i])}</span>`;
       const m = S.showTrades && marks.find((x) => x.xAxis === d);
       if (m) {
         const list = (a) => (a.length > 6 ? a.slice(0, 6).join(', ') + ` +${a.length - 6} more` : a.join(', '));
@@ -491,9 +514,9 @@ function drawPerf(fresh) {
       axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (long ? v.slice(0, 7) : short ? v.slice(5) : v.slice(2, 7)) } },
     yAxis: { type: 'value', scale: true, ...axisCommon, axisLabel: pctAxis },
     dataZoom: [
-      { type: 'slider', xAxisIndex: 0, startValue: s, endValue: e, height: 20, bottom: 6, brushSelect: false, borderColor: 'rgba(255,255,255,.08)', backgroundColor: 'rgba(255,255,255,.02)',
+      { type: 'slider', xAxisIndex: 0, startValue: s, endValue: e, height: 20, bottom: 6, left: isMobile() ? 16 : 92, right: isMobile() ? 16 : 92, showDetail: !isMobile(), brushSelect: false, borderColor: C.line, backgroundColor: C.wash,
         fillerColor: 'rgba(255,198,41,.12)', handleStyle: { color: C.gold, borderColor: C.gold }, moveHandleStyle: { color: 'rgba(255,198,41,.4)' },
-        dataBackground: { lineStyle: { color: 'rgba(255,255,255,.18)' }, areaStyle: { color: 'rgba(255,255,255,.04)' } },
+        dataBackground: { lineStyle: { color: C.axis }, areaStyle: { color: C.wash } },
         selectedDataBackground: { lineStyle: { color: C.gold }, areaStyle: { color: 'rgba(255,198,41,.08)' } },
         textStyle: { color: C.ink2, fontSize: 10 }, labelFormatter: (i) => fdate(bt.dates[i]) },
     ],
@@ -586,12 +609,12 @@ function sectorData(basis) {
 function renderSectorBars(id, basis) {
   const d = sectorData(basis).reverse();
   setChart(id, {
-    grid: { left: 150, right: 30, top: 28, bottom: 20 },
+    grid: { left: 14, right: 30, top: 28, bottom: 20, containLabel: true },
     legend: { top: 0, right: 0, textStyle: { color: C.ink2 }, icon: 'roundRect', itemWidth: 10, itemHeight: 10 },
     tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'shadow' },
       formatter: (p) => { const r = d[p[0].dataIndex]; return `<b>${r.s}</b><br>SMIF: ${fmt.pct(r.smif)}<br>S&P 500: ${fmt.pct(r.spx)}<br>Difference: ${fmt.pts(r.smif - r.spx)}`; } },
     xAxis: { type: 'value', ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => fmt.pct(v, 0) } },
-    yAxis: { type: 'category', data: d.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLabel: { color: C.ink2, fontSize: 11 } },
+    yAxis: { type: 'category', data: d.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLabel: { color: C.ink2, fontSize: 11, width: isMobile() ? 110 : 170, overflow: 'truncate' } },
     series: [
       { name: 'SMIF', type: 'bar', data: d.map((x) => x.smif), itemStyle: { color: C.gold, borderRadius: [0, 4, 4, 0] }, barGap: '15%', barWidth: '34%' },
       { name: 'S&P 500', type: 'bar', data: d.map((x) => x.spx), itemStyle: { color: C.gray, borderRadius: [0, 4, 4, 0] }, barWidth: '34%' },
@@ -613,7 +636,7 @@ function renderAllocation() {
   const data = Object.entries(byS).map(([s, rs]) => ({
     name: s,
     value: rs.reduce((a, r) => a + r.value, 0),
-    itemStyle: { color: '#3a3835', borderColor: '#0c0b0a', borderWidth: 3, gapWidth: 2 },
+    itemStyle: { color: C.tile, borderColor: C.page, borderWidth: 3, gapWidth: 2 },
     children: rs.map((r) => {
       const v = mode === 'ret' ? r.ret : r.dayChg;
       return { name: r.ticker, value: r.value, r, itemStyle: { color: divColor(v, mode === 'ret' ? 1 : 0.04), borderRadius: 4 } };
@@ -627,12 +650,12 @@ function renderAllocation() {
     } },
     series: [{
       type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false }, width: '100%', height: '100%', top: 0, left: 0,
-      upperLabel: { show: true, height: isMobile() ? 20 : 24, color: '#FFC629', fontWeight: 700, fontSize: isMobile() ? 10 : 12, backgroundColor: 'transparent', overflow: 'truncate', ellipsis: '',
+      upperLabel: { show: true, height: isMobile() ? 20 : 24, color: C.goldText, fontWeight: 700, fontSize: isMobile() ? 10 : 12, backgroundColor: 'transparent', overflow: 'truncate', ellipsis: '',
         formatter: (p) => (p.name ? `${shortName(p.name)}  ${fmt.pct(p.value / calc.total, isMobile() ? 0 : 1)}` : '') },
       label: { show: true, color: '#fff', fontWeight: 700, fontSize: isMobile() ? 10 : 12, lineHeight: isMobile() ? 12 : 15, overflow: 'truncate', ellipsis: '',
         formatter: (p) => { const r = p.data.r; if (!r) return p.name; const v = mode === 'ret' ? r.ret : r.dayChg; return isMobile() ? p.name : `${p.name}\n{s|${fmt.spct(v, mode === 'ret' ? 0 : 1)}}`; },
         rich: { s: { fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)' } } },
-      levels: [{ itemStyle: { borderColor: '#0c0b0a', borderWidth: 4, gapWidth: 4 } }, { itemStyle: { gapWidth: 2 } }],
+      levels: [{ itemStyle: { borderColor: C.page, borderWidth: 4, gapWidth: 4 } }, { itemStyle: { gapWidth: 2 } }],
       data,
     }],
   }, (p) => p.data?.r && openStock(p.data.r.ticker));
@@ -693,7 +716,8 @@ function renderAllocation() {
 // Performance
 // ======================================================================
 function renderPerformance() {
-  const rows = calc.rows.filter((r) => r.ret != null && r.assetClass !== 'Money Market');
+  const pc = S.perfClass || 'all';
+  const rows = calc.rows.filter((r) => r.ret != null && r.assetClass !== 'Money Market' && (pc === 'all' || (pc === 'eq' ? r.assetClass === 'Equity' : r.assetClass === 'Fixed Income')));
   const best = [...rows].sort((a, b) => b.ret - a.ret)[0];
   const worst = [...rows].sort((a, b) => a.ret - b.ret)[0];
   const winners = rows.filter((r) => r.ret > 0).length;
@@ -886,11 +910,12 @@ function renderHoldings() {
   const secs = [...new Set(calc.rows.map((r) => r.sector).filter(Boolean))].sort();
   if (sel.options.length !== secs.length + 1) sel.innerHTML = '<option value="">All sectors / classes</option>' + secs.map((s) => `<option>${esc(s)}</option>`).join('');
   const q = $('#hSearch').value.trim().toLowerCase();
-  const sec = sel.value;
-  const rows = calc.rows.filter((r) => (!q || r.ticker.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)) && (!sec || r.sector === sec));
+  const sec = sel.value, ac = $('#hClass').value;
+  const rows = calc.rows.filter((r) => (!q || r.ticker.toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q)) && (!sec || r.sector === sec) && (!ac || r.assetClass === ac));
   sortableTable('#tblHoldings', [
     { k: 'ticker', l: 'Holding', f: (r) => `<span class="tk">${r.ticker}</span><span class="nm">${esc(r.name)}</span>` },
-    { k: 'sector', l: 'Sector', f: (r) => `<span class="tag">${esc(r.sector || r.assetClass)}</span>` },
+    { k: 'assetClass', l: 'Class', f: (r) => acTag(r.assetClass) },
+    { k: 'sector', l: 'Sector', f: (r) => (r.assetClass === 'Equity' ? `<span class="tag">${esc(r.sector)}</span>` : '<span style="color:var(--muted)">—</span>') },
     { k: 'quantity', l: 'Shares', n: 1, f: (r) => fmt.n(r.quantity, 2) },
     { k: 'avgCost', l: 'Avg cost', n: 1, f: (r) => fmt.usdC(r.avgCost) },
     { k: 'price', l: 'Price', n: 1, f: (r) => fmt.usdC(r.price) + (r.live ? '' : ' <span title="Snapshot price" style="color:var(--muted)">•</span>') },
@@ -1094,7 +1119,7 @@ async function analyze(sym) {
   if (!m && !held && !price) {
     S.stock.manual = true;
   }
-  S.stock.gics = gicsFor(held, prof, held?.sector || (prof?.sector ? toGics(prof.sector) : spx?.sector));
+  S.stock.gics = gicsFor(held, prof, held?.sector || (prof?.sector ? toGics(prof.sector) : spx?.sector), spx?.sector, sym);
   S.stock.sector = S.stock.gics.sector || 'Other';
   S.stock.industry = S.stock.gics.industry || prof?.industry || '';
   renderStockCard(err);
@@ -1174,6 +1199,7 @@ function renderStockCard(err) {
 function gicsLine(s) {
   const g = s.gics || {};
   const t = g.source === 'fund' ? 'GICS sector and industry from the fund\'s workbook.'
+    : g.source === 'spx' ? `GICS sector from the fund's S&P 500 constituent list.${g.industry ? '' : g.yahoo ? ` Industry shown is Yahoo's ("${g.yahoo}"), which doesn't line up with GICS for this stock.` : ''}`
     : g.source === 'mapped' ? `Mapped to GICS from Yahoo Finance's industry ("${g.yahoo}"). Yahoo uses its own categories, so double-check on Bloomberg before relying on it.`
     : g.source === 'unmapped' ? `Yahoo lists this as "${g.yahoo}", which doesn't map cleanly to a GICS industry.` : 'No industry data available.';
   const ex = s.m?.exchange ? ` · ${esc(s.m.exchange)}` : '';
@@ -1273,7 +1299,7 @@ async function drawStockChart() {
       formatter: (p) => {
         const d = p[0].axisValue, i = dates.indexOf(d), nd = dates[i + 1] || '9999';
         const here = trades.filter((t) => t.date >= d && t.date < nd && dates.findIndex((x) => x >= t.date) === i);
-        return `<b>${fdate(d)}</b><br>${p[0].marker} ${fmt.usdC(p[0].value)} <span style="color:#8e8a82">(${fmt.spct(p[0].value / px[0] - 1)} in period)</span>` + here.map((t) => `<br><span style="color:${t.type === 'Buy' ? '#3ccf7f' : '#f0625a'}">We ${t.type === 'Buy' ? 'bought' : 'sold'} ${fmt.n(t.shares, 2)} sh @ ${fmt.usdC(t.price)}</span>`).join('');
+        return `<b>${fdate(d)}</b><br>${p[0].marker} ${fmt.usdC(p[0].value)} <span style="color:${C.muted}">(${fmt.spct(p[0].value / px[0] - 1)} in period)</span>` + here.map((t) => `<br><span style="color:${t.type === 'Buy' ? '#3ccf7f' : '#f0625a'}">We ${t.type === 'Buy' ? 'bought' : 'sold'} ${fmt.n(t.shares, 2)} sh @ ${fmt.usdC(t.price)}</span>`).join('');
       } },
     xAxis, yAxis: { type: 'value', scale: true, ...axisCommon },
     series: [{ name: sym, type: 'line', data: px, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold },
@@ -1935,7 +1961,7 @@ async function loadHistory() {
 // ======================================================================
 // Routing & wiring
 // ======================================================================
-const renderers = { overview: renderOverview, allocation: renderAllocation, performance: renderPerformance, risk: renderRisk, holdings: renderHoldings, screener: () => { renderTicket(); syncTradePanel(); }, data: renderData };
+const renderers = { overview: renderOverview, returns: renderReturns, allocation: renderAllocation, performance: renderPerformance, risk: renderRisk, holdings: renderHoldings, screener: () => { renderTicket(); syncTradePanel(); }, data: renderData };
 function show(view) {
   if (!renderers[view]) view = 'overview';
   if ($('#modal').classList.contains('open')) closeModal();
@@ -1945,6 +1971,7 @@ function show(view) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
   if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
   try { renderers[view](); } catch (e) { console.error(e); toast('Render error: ' + e.message, 5000); }
+  fillAcStrips();
   requestAnimationFrame(() => Object.values(charts).forEach((c) => c && !c.isDisposed() && c.resize()));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -1954,8 +1981,19 @@ function refreshAll(resetDraft) {
   renderStatus();
   renderTape();
   renderers[S.view]();
+  fillAcStrips();
 }
 $$('#tabs button').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+$('#themeBtn').addEventListener('click', () => {
+  const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem('smif.theme', t); } catch { /* private mode */ }
+  applyTheme(t);
+  Object.values(charts).forEach((c) => { try { c.dispose(); } catch { /* ignore */ } });
+  for (const k in charts) delete charts[k];
+  refreshAll();
+  if (S.view === 'screener' && S.stock) renderStockCard();
+});
+applyTheme(document.documentElement.dataset.theme);
 $$('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); show(a.dataset.go); }));
 window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 const seg = (id, key, fn) => $$(`#${id} button`).forEach((b) => b.addEventListener('click', () => { S[key] = b.dataset.v; $$(`#${id} button`).forEach((x) => x.classList.toggle('on', x === b)); fn(); }));
@@ -1982,6 +2020,7 @@ $('#perfReset').addEventListener('click', () => {
 });
 $('#tradeToggle').addEventListener('change', (e) => { S.showTrades = e.target.checked; store.set('showTrades', S.showTrades); renderPerfChart(); });
 seg('secBasis', 'secBasis', () => renderSectorBars('chSector', S.secBasis));
+seg('perfClass', 'perfClass', renderPerformance);
 seg('perfMode', 'perfMode', renderPerformance);
 $('#hSearch').addEventListener('input', renderHoldings);
 $('#fhSearch').addEventListener('input', renderHistoryLists);
@@ -1989,6 +2028,7 @@ $('#tlType').addEventListener('change', () => { tlShown = 40; renderHistoryLists
 $('#tlSearch').addEventListener('input', () => { tlShown = 40; renderHistoryLists(); });
 $('#tlMore').addEventListener('click', () => { tlShown += 60; renderHistoryLists(); });
 $('#hSector').addEventListener('change', renderHoldings);
+$('#hClass').addEventListener('change', renderHoldings);
 $('#hExport').addEventListener('click', downloadMaster);
 $('#rfInput').addEventListener('change', (e) => { const v = parseFloat(e.target.value); S.rf = isFinite(v) ? Math.min(20, Math.max(0, v)) / 100 : null; if (S.rf != null) e.target.value = (S.rf * 100).toFixed(2); store.set('rf', S.rf); computeStats(); renderRisk(); });
 $('#refreshBtn').addEventListener('click', async () => { toast('Refreshing prices…'); await loadMarket(); refreshAll(); toast(S.live ? 'Prices updated' : 'Live data unavailable — showing snapshot'); });
@@ -2143,7 +2183,7 @@ if (window.matchMedia('(hover: hover)').matches) {
 }
 // iPhones don't send a click when you tap empty space, so close on any touch outside the box too
 document.addEventListener('touchstart', (e) => { if (tipFor && !e.target.closest('.tip, .tip-pop')) hideTip(); }, { passive: true, capture: true });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('tip')) { e.preventDefault(); showTip(e.target); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideTip(); if ($('#modal')?.classList.contains('open') && !SC.open) closeModal(); } if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('tip')) { e.preventDefault(); showTip(e.target); } });
 window.addEventListener('scroll', () => { hideTip(); $('#toTop').classList.toggle('show', window.scrollY > 600); }, { passive: true });
 $('#toTop').addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 document.addEventListener('scroll', (e) => { if (e.target !== document && tipFor && e.target.contains?.(tipFor)) hideTip(); }, { capture: true, passive: true });
@@ -2183,7 +2223,7 @@ document.addEventListener('scroll', (e) => { if (e.target !== document && tipFor
 // ======================================================================
 // Scrappy AI — portfolio assistant (answers are generated on the server from the fund data we send)
 // ======================================================================
-const SC = { open: false, msgs: store.get('scrappyChat', []), busy: false };
+const SC = { open: false, msgs: store.get('scrappyChat', []).map((m) => ({ ...m, typing: false })), busy: false };
 const STOP = new Set('a an the and or but if is are was were be been being do does did have has had having we our us i me my you your it its this that these those of on in to for from with about at by as into over under than then there here what which who whom whose when where why how any all some more most much many can could should would will shall may might must not no yes buy sell sold bought own owned owning hold held holding stock stocks share shares position positions portfolio fund smif good bad think like right now today currently current price prices trade trades trading add trim sector sectors weight weights compare versus vs ever before previously still also just really please tell show give analysis analyze long short term year years month months company companies inc corp invest investing investment worth time again would'.split(' '));
 const NAME_STOP = new Set('the american first general united international national global new bank capital financial group holdings company corporation corp inc ltd plc co class trust energy home digital royal southern western eastern northern public service health technologies systems industries'.split(' '));
 function normName(n) { return String(n || '').toLowerCase().replace(/&/g, ' and ').replace(/\b(inc|corp|corporation|company|co|holdings|holding|group|plc|ltd|limited|class [abc]|the|n\.?v|s\.?a|l\.?p|com)\b\.?/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -2241,8 +2281,8 @@ async function scrappyStockFacts(t) {
   const held = S.base.holdings.find((h) => h.ticker === t);
   const row = calc.rows.find((r) => r.ticker === t);
   const st = S.stats[t], p = prof || {};
-  const g = gicsFor(held, prof, held?.sector || (p.sector ? toGics(p.sector) : (S.base.spxConstituents || []).find((x) => x.ticker === t)?.sector));
   const spx = (S.base.spxConstituents || []).find((x) => x.ticker === t);
+  const g = gicsFor(held, prof, held?.sector || (p.sector ? toGics(p.sector) : spx?.sector), spx?.sector, t);
   const L = [`## ${t} — ${p.name || held?.name || spx?.name || m?.name || t}`];
   L.push(`GICS: ${g.sector || '?'} / ${g.industry || p.industry || '?'}${g.source === 'mapped' ? ' (mapped from Yahoo)' : ''}. ${spx ? `In S&P 500 at ${fmt.pct(spx.weight, 2)} weight.` : 'Not in the S&P 500 list.'}`);
   const price = m?.price ?? held?.price;
@@ -2267,11 +2307,32 @@ async function scrappyStockFacts(t) {
   put('Yahoo beta (5y)', p.beta != null ? fmt.x(p.beta) : null);
   if (f.length) L.push('Fundamentals (Yahoo): ' + f.join(', ') + '.');
   if (p.summary) L.push('Business: ' + String(p.summary).slice(0, 500));
-  if (g.sector && calc.sectors[g.sector]) {
-    const ours = calc.sectors[g.sector].wEq || 0, bw = S.base.benchmark.sectorWeights[g.sector];
-    L.push(`Fit: our ${g.sector} weight ${fmt.pct(ours)} of equities vs S&P ${bw != null ? fmt.pct(bw) : '?'} (${bw != null ? fmt.pts(ours - bw) : ''}). Holdings in this sector: ${calc.rows.filter((r) => r.sector === g.sector && r.assetClass === 'Equity').map((r) => `${r.ticker} ${fmt.pct(r.weight, 1)}`).join(', ') || 'none'}.`);
-  } else if (g.sector) L.push(`Fit: we hold nothing in ${g.sector}; S&P weight ${fmt.pct(S.base.benchmark.sectorWeights[g.sector] || 0)}.`);
+  if (g.sector) {
+    const sw = sectorWeightsIf(g.sector, 0);
+    const peers = calc.rows.filter((r) => r.sector === g.sector && r.assetClass === 'Equity').map((r) => `${r.ticker} ${fmt.pct(r.weight, 1)}`).join(', ') || 'none';
+    L.push(`Fit (already worked out — repeat these words, don't recompute): ${g.sector} is ${relWords(sw.now, sw.bench)}. Our holdings in ${g.sector}: ${peers}.`);
+    if (price) {
+      const amt = 0.02 * calc.total, sh = Math.floor(amt / price), cost = sh * price;
+      const after = sectorWeightsIf(g.sector, cost);
+      const curW = row ? row.weight : 0, newW = (curW * calc.total + cost) / calc.total;
+      L.push(`What-if: buying ${sh} more shares (≈${fmt.usd(cost)}, a 2% starter position) would take ${t} to ${fmt.pct(newW, 1)} of the fund and ${g.sector} to ${fmt.pct(after.now)} of equities, ${relWords(after.now, after.bench)}. Cash is ${fmt.usd(calc.cash)}, so ${cost > calc.cash ? `about ${fmt.usd(cost - calc.cash)} would have to come from a sell` : 'cash covers it'}.`);
+    }
+  }
   return L.join('\n');
+}
+// "37.4% vs 39.2%" → plain words, so the AI never has to compare numbers itself
+function relWords(ours, bench) {
+  if (bench == null) return `${fmt.pct(ours)} of our equities (no S&P weight available)`;
+  const d = ours - bench, pts = Math.abs(d * 100).toFixed(1);
+  const band = Math.abs(d) <= 0.05 ? 'inside the ±5 pt band' : 'OUTSIDE the ±5 pt band';
+  if (Math.abs(d) < 0.005) return `in line with the S&P 500 (ours ${fmt.pct(ours)} vs S&P ${fmt.pct(bench)}), ${band}`;
+  return `${d < 0 ? 'UNDERWEIGHT' : 'OVERWEIGHT'} by ${pts} pts vs the S&P 500 (ours ${fmt.pct(ours)} is ${d < 0 ? 'BELOW' : 'ABOVE'} the S&P's ${fmt.pct(bench)}), ${band}`;
+}
+function sectorWeightsIf(sector, addValue) {
+  const eq = calc.rows.filter((r) => r.assetClass === 'Equity');
+  const eqV = eq.reduce((a, r) => a + r.value, 0) + addValue;
+  const secV = eq.filter((r) => r.sector === sector).reduce((a, r) => a + r.value, 0) + addValue;
+  return { now: eqV ? secV / eqV : 0, bench: S.base.benchmark.sectorWeights[sector] };
 }
 async function scrappyContext(q) {
   const c = calc, bw = S.base.benchmark.sectorWeights;
@@ -2283,10 +2344,14 @@ async function scrappyContext(q) {
     L.push(`Portfolio risk (1Y daily, current holdings): beta ${fmt.x(weightedBeta(c, betas))}, volatility ${fmt.pct(S.pstats.vol)}, Sharpe ${fmt.x(S.pstats.sharpe)}, max drawdown ${fmt.pct(S.pstats.maxDD)}, 1Y return at current weights ${fmt.spct(S.pstats.totalRet)}; S&P 500 1Y ${fmt.spct(S.pstats.benchStats?.totalRet)}, S&P vol ${fmt.pct(S.pstats.benchStats?.vol)}.`);
   }
   if (S.perfBt?.bt) { const b = S.perfBt.bt, w = perfWindowStats(b, 0, b.dates.length - 1); L.push(`Actual fund performance shown on the overview chart (${b.dates[0]} to ${b.dates[b.dates.length - 1]}, time-weighted, from Schwab transactions): SMIF ${fmt.spct(w.sm)} vs S&P 500 ${fmt.spct(w.sp)}${w.smA != null ? `, annualized ${fmt.spct(w.smA)} vs ${fmt.spct(w.spA)}` : ''}.`); }
+  if (RV.loaded && RV.ss) {
+    const yr = (w) => calendarYears(w).slice(-6).map((y) => `${y.year}${y.partial ? '*' : ''}: ${fmt.spct(y.fund)} vs ${fmt.spct(y.bench)}`).join('; ');
+    L.push(`Calendar-year returns (* = partial year), from the Performance tab — total fund vs SPY: ${yr(RV.total || [])}. Equity sleeve vs SPY: ${yr(viewWeeks(RV.ss, 'eq'))}. Fixed-income sleeve vs AGG (held since ${RV.ss.fiStart || 'n/a'}): ${yr(viewWeeks(RV.ss, 'fi')) || 'no history'}.`);
+  }
   L.push('\n# Holdings (ticker | name | GICS sector / industry | shares | price | value | % of fund | avg cost | gain since purchase | first bought | 1Y beta)');
   [...c.rows].sort((a, b) => b.value - a.value).forEach((r) => L.push(`${r.ticker} | ${r.name} | ${r.assetClass === 'Equity' ? `${r.sector} / ${fullIndustry(r.industry)}` : r.assetClass} | ${fmt.n(r.quantity, 2)} | ${fmt.usdC(r.price)} | ${fmt.usd(r.value)} | ${fmt.pct(r.weight, 2)} | ${fmt.usdC(r.avgCost)} | ${fmt.spct(r.ret)} | ${r.purchaseDate || '?'} | ${S.stats[r.ticker]?.beta != null ? fmt.x(S.stats[r.ticker].beta) : '?'}`));
-  L.push('\n# Sector weights in the equity sleeve (ours vs S&P 500, difference in pts)');
-  Object.keys(bw).forEach((s) => { const o = c.sectors[s]?.wEq || 0; L.push(`${s}: ${fmt.pct(o)} vs ${fmt.pct(bw[s])} (${fmt.pts(o - bw[s])})`); });
+  L.push('\n# Sector weights in the equity sleeve vs the S&P 500 (already compared for you — use these words)');
+  Object.keys(bw).sort((a, b) => ((c.sectors[a]?.wEq || 0) - bw[a]) - ((c.sectors[b]?.wEq || 0) - bw[b])).forEach((s) => L.push(`${s}: ${relWords(c.sectors[s]?.wEq || 0, bw[s])}`));
   if (S.hist) {
     const former = Object.values(S.hist.tickers).filter((t) => t.ticker !== 'SNOXX' && !t.periods.some((p) => !p.to));
     L.push(`\n# Former holdings (sold out) — ticker name: periods owned; realized gain`);
@@ -2325,15 +2390,46 @@ function scrappyRender() {
     $$('.sc-chip', box).forEach((b) => b.addEventListener('click', () => scrappyAsk(b.textContent)));
     return;
   }
-  box.innerHTML = SC.msgs.map((m) => m.role === 'user' ? `<div class="sc-msg me">${esc(m.content)}</div>`
+  box.innerHTML = SC.msgs.map((m, i) => m.role === 'user' ? `<div class="sc-msg me">${esc(m.content)}</div>`
+    : m.typing ? `<div class="sc-msg bot" data-typing="${i}"></div>`
     : `<div class="sc-msg bot${m.error ? ' err' : ''}">${m.error ? esc(m.content) : scrappyMd(m.content)}${m.meta ? `<div class="sc-meta">${esc(m.meta)}</div>` : ''}</div>`).join('')
     + (SC.busy ? `<div class="sc-msg bot sc-typing"><span></span><span></span><span></span><em>${esc(SC.busyText || 'Thinking…')}</em></div>` : '');
   box.scrollTop = box.scrollHeight;
+  const tEl = $('[data-typing]', box);
+  if (tEl) scrappyType(SC.msgs[+tEl.dataset.typing], tEl);
+}
+// type the answer out a few characters at a time (click the bubble to show it all at once)
+function scrappyType(m, el) {
+  const box = $('#scBody');
+  const full = m.content, step = Math.max(2, Math.round(full.length / 220)); // ~3–4 s for a long answer
+  let n = m.shown || 0, done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    m.typing = false; m.shown = 0;
+    el.removeAttribute('data-typing');
+    el.innerHTML = scrappyMd(full) + (m.meta ? `<div class="sc-meta">${esc(m.meta)}</div>` : '');
+    store.set('scrappyChat', SC.msgs);
+    if (box) box.scrollTop = box.scrollHeight;
+  };
+  el.onclick = finish;
+  const stick = () => box && box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const tick = () => {
+    if (done || !el.isConnected) return;
+    n = Math.min(full.length, n + step); m.shown = n;
+    const follow = stick();
+    let part = full.slice(0, n);
+    if ((part.match(/\*\*/g) || []).length % 2) part += '**'; // don't flash half-open bold markers
+    el.innerHTML = scrappyMd(part) + '<span class="sc-caret"></span>';
+    if (follow) box.scrollTop = box.scrollHeight;
+    if (n >= full.length) finish(); else setTimeout(tick, 16);
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) finish(); else tick();
 }
 async function scrappyAsk(q) {
   q = String(q || '').trim();
   if (!q || SC.busy) return;
   if (!S.api) { SC.msgs.push({ role: 'user', content: q }, { role: 'assistant', content: 'Scrappy needs the live site (the server functions) to answer. Open the deployed dashboard to chat.', error: true }); scrappyRender(); return; }
+  SC.msgs.forEach((m) => { m.typing = false; });
   const history = SC.msgs.filter((m) => !m.error).slice(-6).map(({ role, content }) => ({ role, content }));
   SC.msgs.push({ role: 'user', content: q });
   SC.busy = true; SC.busyText = 'Pulling fund data…';
@@ -2342,7 +2438,7 @@ async function scrappyAsk(q) {
     const ctx = await scrappyContext(q);
     SC.busyText = ctx.ents.length ? `Analyzing ${ctx.ents.join(', ')}…` : 'Thinking…'; scrappyRender();
     const r = await getJSON('/api/scrappy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: q, history, context: ctx.text }) }, 60000);
-    SC.msgs.push({ role: 'assistant', content: r.answer || '(no answer)', meta: [r.model, ctx.ents.length ? 'looked up ' + ctx.ents.join(', ') : ''].filter(Boolean).join(' · ') });
+    SC.msgs.push({ role: 'assistant', content: r.answer || '(no answer)', typing: true, meta: [r.model === 'guardrail' ? '' : r.model, ctx.ents.length && !r.blocked ? 'looked up ' + ctx.ents.join(', ') : ''].filter(Boolean).join(' · ') });
   } catch (e) {
     SC.msgs.push({ role: 'assistant', content: e.name === 'AbortError' ? 'That took too long — try again or ask a shorter question.' : String(e.message || e), error: true });
   }
@@ -2372,3 +2468,223 @@ async function scrappyAsk(q) {
   $('#scInput').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px'; });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && SC.open) open(false); });
 })();
+
+// ======================================================================
+// Performance tab — year-by-year returns by sleeve
+// ======================================================================
+const RV = { mode: store.get('rvMode', 'total'), chart: store.get('rvChart', 'years'), mix: store.get('rvMix', 'actual'), diff: store.get('rvDiff', false), labels: store.get('rvLabels', false), from: null, to: null, all: {}, loading: null };
+const AC_COLOR = () => ({ eq: C.gold, fi: C.blue, mm: C.violet, cash: C.gray });
+// four asset classes, always named and coloured the same way across the site
+function acSummary() {
+  const c = calc;
+  return [
+    { k: 'eq', name: 'Equities', v: c.eqValue, what: `${c.nEquity} stocks`, note: 'Compared with the S&P 500' },
+    { k: 'fi', name: 'Fixed income', v: c.fiValue, what: c.rows.filter((r) => r.assetClass === 'Fixed Income').map((r) => r.ticker).join(', ') || 'none', note: 'Bond ETFs · compared with the Bloomberg US Aggregate (AGG)' },
+    { k: 'mm', name: 'Money market', v: c.mmValue, what: c.rows.filter((r) => r.assetClass === 'Money Market').map((r) => r.ticker).join(', ') || 'none', note: 'Treasury money-market fund · cash-like, earns T-bill yield' },
+    { k: 'cash', name: 'Cash', v: c.cash, what: 'Uninvested cash at Schwab', note: 'What Trade Lab buys are paid from' },
+  ];
+}
+function acStripHTML() {
+  const t = calc.total;
+  return `<div class="ac-strip">${acSummary().map((a) => `<div class="ac-cell"><i class="ac-dot ${a.k}"></i><span>${a.name}</span><b>${fmt.pct(a.v / t)}</b><small>${fmt.usd(a.v)}</small></div>`).join('')}</div>`;
+}
+async function loadAllHistory() {
+  if (RV.loaded || !S.api || !S.hist) return;
+  if (RV.loading) return RV.loading;
+  const syms = Object.values(S.hist.tickers).filter((t) => assetClassOf(t.ticker, t.name, currentClasses()) !== 'Money Market').map((t) => t.ticker);
+  const need = [...new Set(['SPY', 'AGG', ...syms])];
+  RV.loading = (async () => {
+    let done = 0;
+    const chunks = []; for (let i = 0; i < need.length; i += 6) chunks.push(need.slice(i, i + 6));
+    // a few requests at a time so the progress line moves and Yahoo isn't flooded
+    for (let i = 0; i < chunks.length; i += 4) {
+      await Promise.allSettled(chunks.slice(i, i + 4).map((c) => getJSON(`/api/market?symbols=${encodeURIComponent(c.join(','))}&range=all&interval=1wk`, {}, 30000)
+        .then((r) => r.data.forEach((d) => { if (d && !d.error && d.closes?.length) RV.all[d.symbol.toUpperCase()] = d; }))));
+      done = Math.min(need.length, (i + 4) * 6);
+      if (S.view === 'returns') $('#rvTiles').innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty"><b>Loading ${need.length} price histories since 2009…</b>${done} of ${need.length} done. This happens once per visit.</div></div>`;
+    }
+    RV.loaded = true; RV.loading = null;
+  })();
+  return RV.loading;
+}
+function currentClasses() { return Object.fromEntries(S.base.holdings.map((h) => [h.ticker, h.assetClass])); }
+function rvData() {
+  if (!RV.ss) RV.ss = sleeveSeries(S.hist, RV.all, currentClasses());
+  if (!RV.total) {
+    const bt = actualBacktest(S.hist, RV.all, S.hist.from);
+    RV.total = bt ? bt.dates.slice(1).map((d, i) => ({ d0: bt.dates[i], d1: d, r: bt.smif[i + 1] / bt.smif[i] - 1, b: bt.bench[i + 1] / bt.bench[i] - 1, cov: 1 })) : [];
+    RV.totalMissing = bt?.missing || [];
+  }
+  const ss = RV.ss;
+  const actual = RV.mix === 'actual';
+  const share = actual ? null : +RV.mix / 100;
+  let weeks, label, bench, color;
+  if (RV.mode === 'total') { weeks = RV.total; label = 'Total fund'; bench = 'S&P 500 (SPY)'; color = C.gold; }
+  else if (RV.mode === 'eq') { weeks = viewWeeks(ss, 'eq'); label = 'Equities'; bench = 'S&P 500 (SPY)'; color = C.gold; }
+  else if (RV.mode === 'fi') { weeks = viewWeeks(ss, 'fi'); label = 'Fixed income'; bench = 'Bloomberg US Agg (AGG)'; color = C.blue; }
+  else if (actual) { weeks = viewWeeks(ss, 'actual'); label = 'Equities + fixed income (actual mix)'; bench = 'SPY / AGG at the same mix'; color = C.violet; }
+  else {
+    weeks = share === 1 ? viewWeeks(ss, 'eq') : share === 0 ? viewWeeks(ss, 'fi') : viewWeeks(ss, 'mix', share);
+    label = share === 1 ? 'Equities' : share === 0 ? 'Fixed income' : `${Math.round(share * 100)}% equities / ${Math.round((1 - share) * 100)}% fixed income`;
+    bench = share === 1 ? 'S&P 500 (SPY)' : share === 0 ? 'Bloomberg US Agg (AGG)' : `${Math.round(share * 100)}% SPY + ${Math.round((1 - share) * 100)}% AGG`;
+    color = share === 1 ? C.gold : share === 0 ? C.blue : C.violet;
+  }
+  return { weeks, label, bench, color, years: calendarYears(weeks), trailing: trailingPeriods(weeks) };
+}
+async function renderReturns() {
+  $('#rvSplit').innerHTML = acSplitHTML();
+  syncRvControls();
+  if (!S.api || !S.hist) {
+    $('#rvTiles').innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty"><b>Needs live data and the Schwab history.</b>Open the deployed site to see year-by-year performance.</div></div>`;
+    emptyChart('chYears', 'Year-by-year returns appear once live data is connected.');
+    $('#tblYears').innerHTML = '';
+    return;
+  }
+  if (!RV.loaded) {
+    emptyChart('chYears', 'Loading price history…');
+    await loadAllHistory();
+    if (S.view !== 'returns') return;
+    if (!RV.all.SPY) { emptyChart('chYears', 'Couldn\'t load long price history from Yahoo. Try Refresh in a minute.'); return; }
+  }
+  drawReturns();
+}
+function syncRvControls() {
+  $$('#rvMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === RV.mode));
+  $$('#rvChart button').forEach((b) => b.classList.toggle('on', b.dataset.v === RV.chart));
+  $('#rvMixRow').style.display = RV.mode === 'mix' ? '' : 'none';
+  $('#rvYearsWrap').style.display = RV.chart === 'years' ? '' : 'none';
+  $('#rvDiff').checked = RV.diff; $('#rvLabels').checked = RV.labels;
+  const actual = RV.mix === 'actual';
+  const eqShare = actual ? (calc.eqValue / (calc.eqValue + calc.fiValue || 1)) : +RV.mix / 100;
+  $('#rvMix').value = Math.round(eqShare * 100);
+  $('#rvMix').classList.toggle('actual', actual);
+  $('#rvEqPct').textContent = fmt.pct(eqShare, 0); $('#rvFiPct').textContent = fmt.pct(1 - eqShare, 0);
+  $$('.rv-presets [data-mix]').forEach((b) => b.classList.toggle('on', String(RV.mix) === b.dataset.mix));
+}
+function drawReturns() {
+  const D = rvData();
+  const yrsAll = D.years;
+  const yearsList = yrsAll.map((y) => y.year);
+  // year range pickers
+  const fromSel = $('#rvFrom'), toSel = $('#rvTo');
+  const opts = yearsList.map((y) => `<option value="${y}">${y}</option>`).join('');
+  if (fromSel.dataset.opts !== opts) { fromSel.innerHTML = opts; toSel.innerHTML = opts; fromSel.dataset.opts = opts; }
+  let from = RV.from && yearsList.includes(RV.from) ? RV.from : yearsList[0], to = RV.to && yearsList.includes(RV.to) ? RV.to : yearsList[yearsList.length - 1];
+  if (from > to) [from, to] = [to, from];
+  fromSel.value = from; toSel.value = to;
+  const years = yrsAll.filter((y) => y.year >= from && y.year <= to);
+  const trail = D.trailing;
+  const isYears = RV.chart === 'years';
+  // benchmark line
+  const fiStart = RV.ss.fiStart;
+  const notes = [];
+  if ((RV.mode === 'fi' || (RV.mode === 'mix' && RV.mix !== 'actual' && +RV.mix < 100)) && fiStart) notes.push(`SMIF has held bond ETFs since <b>${fdate(fiStart)}</b>.${RV.mode === 'mix' && +RV.mix > 0 ? ' Before that, the bond part of the mix uses AGG as a stand-in (marked ◇).' : ''}`);
+  if (RV.mode === 'fi' && !fiStart) notes.push('The fund has no fixed-income history yet.');
+  if (RV.mode === 'mix' && RV.mix !== 'actual') notes.push('A what-if: our equity and bond sleeves blended at this mix and rebalanced weekly, against the same mix of SPY and AGG.');
+  if (RV.mode === 'mix' && RV.mix === 'actual') notes.push('Our equities and bonds at the weights we really held each week. Cash and the money-market fund are left out.');
+  if (RV.mode === 'total') notes.push('Everything the fund owned, including cash and the money-market fund, so cash drag is part of the return.');
+  if (RV.mode === 'eq') notes.push('Stocks only. Cash, the money-market fund and bonds are left out.');
+  $('#rvBench').innerHTML = `<span><i class="ac-dot" style="background:${D.color}"></i><b>${esc(D.label)}</b> vs <i class="ac-dot" style="background:${C.grayLight}"></i><b>${esc(D.bench)}</b></span>${notes.map((n) => `<span class="rv-note">${n}</span>`).join('')}`;
+  // tiles
+  const full = years.filter((y) => !y.partial);
+  const beat = full.filter((y) => y.diff > 0).length;
+  const best = years.reduce((a, y) => (!a || y.fund > a.fund ? y : a), null), worst = years.reduce((a, y) => (!a || y.fund < a.fund ? y : a), null);
+  let f = 1, b = 1; years.forEach((y) => { f *= 1 + y.fund; b *= 1 + y.bench; });
+  const span = years.length ? (new Date(years[years.length - 1].to) - new Date(years[0].from)) / (365.25 * 864e5) : 0;
+  const ann = (g) => (span >= 1 ? Math.pow(g, 1 / span) - 1 : null);
+  const tile = (k, v, s, t) => `<div class="card tile"><div class="label">${k} ${t ? tip(t) : ''}</div><div class="value num">${v}</div><div class="foot">${s}</div></div>`;
+  $('#rvTiles').innerHTML = years.length ? [
+    tile(`Total, ${years[0].year}–${years[years.length - 1].year}`, `<span class="${cls(f - 1)}">${fmt.spct(f - 1)}</span>`, `Benchmark ${fmt.spct(b - 1)} · ${fmt.pts(f - b)}`, 'Growth over the years shown, chained week by week.'),
+    tile('Per year (annualized)', ann(f) != null ? `<span class="${cls(ann(f))}">${fmt.spct(ann(f))}</span>` : '—', ann(b) != null ? `Benchmark ${fmt.spct(ann(b))}` : 'Needs at least a year', 'The steady yearly rate that gives the same total.'),
+    tile('Full years ahead of benchmark', full.length ? `${beat} of ${full.length}` : '—', full.length ? `${fmt.pct(beat / full.length, 0)} hit rate` : 'Only partial years so far', 'Partial first/last years are left out of this count.'),
+    tile('Best / worst year', best ? `<span class="up">${fmt.spct(best.fund, 1)}</span> / <span class="${cls(worst.fund)}">${fmt.spct(worst.fund, 1)}</span>` : '—', best ? `${best.year} / ${worst.year}` : '', 'Calendar-year returns, partial years included.'),
+  ].join('') : `<div class="card" style="grid-column:1/-1"><div class="empty"><b>No history for this view yet.</b>${RV.mode === 'fi' ? 'The fund hasn\'t held bond ETFs in the record.' : ''}</div></div>`;
+  // chart
+  const modeName = { total: 'total portfolio', eq: 'equity sleeve', fi: 'fixed-income sleeve', mix: RV.mix === 'actual' ? 'equities + fixed income' : D.label.toLowerCase() }[RV.mode];
+  $('#rvTitle').textContent = `${isYears ? 'Calendar years' : 'Trailing periods'} — ${modeName}`;
+  $('#rvHint').textContent = isYears ? (years.some((y) => y.partial) ? 'faded bars are partial years' : '') : 'over 1 year = annualized';
+  const cats = isYears ? years.map((y) => String(y.year)) : trail.filter((t) => t.fund != null).map((t) => t.label);
+  const rows = isYears ? years : trail.filter((t) => t.fund != null);
+  const val = (r, k) => (isYears ? r[k] : r.years >= 1 ? r[k + 'Ann'] ?? r[k] : r[k]);
+  const fade = (hex, a) => { const m = hex.match(/\w\w/g); return m && hex.startsWith('#') ? `rgba(${m.map((x) => parseInt(x, 16)).join(',')},${a})` : hex; };
+  const bar = (k, col) => rows.map((r) => {
+    const v = val(r, k);
+    return { value: v == null ? null : +(v * 100).toFixed(2), itemStyle: { color: isYears && r.partial ? fade(col, 0.45) : col, borderRadius: v >= 0 ? [3, 3, 0, 0] : [0, 0, 3, 3], decal: isYears && r.proxyShare > 0.5 && k === 'fund' ? { symbol: 'rect', dashArrayX: [1, 0], dashArrayY: [3, 3], rotation: -0.8, color: 'rgba(255,255,255,0.25)' } : undefined } };
+  });
+  const lbl = { show: RV.labels, position: 'top', color: C.ink2, fontSize: 10, formatter: (p) => (p.value == null ? '' : `${p.value > 0 ? '+' : ''}${p.value.toFixed(1)}`) };
+  const series = [
+    { name: D.label, type: 'bar', data: bar('fund', D.color), itemStyle: { color: D.color }, barGap: '8%', barCategoryGap: '28%', label: lbl },
+    { name: D.bench, type: 'bar', data: bar('bench', C.grayLight), itemStyle: { color: C.grayLight }, label: lbl },
+  ];
+  if (RV.diff) series.push({ name: 'Difference', type: 'bar', data: rows.map((r) => { const v = val(r, 'diff') ?? (val(r, 'fund') - val(r, 'bench')); return { value: +(v * 100).toFixed(2), itemStyle: { color: v >= 0 ? C.up : C.down, borderRadius: 2 } }; }), itemStyle: { color: C.up }, barWidth: isMobile() ? 4 : 8, label: { ...lbl, color: C.muted } });
+  setChart('chYears', {
+    grid: { left: 8, right: 12, top: isMobile() ? 70 : 44, bottom: 8, containLabel: true },
+    legend: { top: 0, left: 0, textStyle: { color: C.ink2 }, itemWidth: 14, itemHeight: 10, icon: 'rect', backgroundColor: C.wash, padding: [6, 10], borderRadius: 6 },
+    tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: C.wash } }, formatter: (p) => {
+      const r = rows[p[0].dataIndex];
+      const f = val(r, 'fund'), bb = val(r, 'bench');
+      let h = `<b>${isYears ? r.year : r.label}</b>${isYears && r.partial ? ` <span style="color:${C.muted}">(${fdate(r.from)} – ${fdate(r.to)})</span>` : !isYears && r.years >= 1 ? ` <span style="color:${C.muted}">per year</span>` : ''}<br>`;
+      h += `<span style="color:${D.color}">●</span> ${esc(D.label)}: <b>${fmt.spct(f)}</b><br><span style="color:${C.grayLight}">●</span> ${esc(D.bench)}: <b>${fmt.spct(bb)}</b><br>`;
+      h += f - bb >= 0 ? `<span style="color:${C.up}">Ahead by ${fmt.pts(f - bb).replace('+', '')}</span>` : `<span style="color:${C.down}">Behind by ${fmt.pts(f - bb).replace('-', '').replace('−', '')}</span>`;
+      if (isYears && r.proxyShare > 0) h += `<br><span style="color:${C.muted}">◇ bond part uses AGG for ${Math.round(r.proxyShare * 100)}% of the year</span>`;
+      if (isYears && r.coverage < 0.97) h += `<br><span style="color:${C.muted}">Price data covers ${fmt.pct(r.coverage, 0)} of this sleeve</span>`;
+      return h;
+    } },
+    xAxis: { type: 'category', data: cats, ...axisCommon, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, color: C.ink2, fontSize: isMobile() ? 10 : 12, interval: 0, rotate: isMobile() && cats.length > 9 ? 45 : 0 } },
+    yAxis: { type: 'value', ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => `${v}%` } },
+    series,
+  });
+  // table
+  const head = isYears ? ['Year', D.label, D.bench, 'Difference', 'Notes'] : ['Period', D.label, D.bench, 'Difference', 'Notes'];
+  const body = rows.map((r) => {
+    const f = val(r, 'fund'), bb = val(r, 'bench'), d = f - bb;
+    const n = isYears ? [r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '', r.proxyShare > 0 ? `◇ AGG stand-in for bonds ${Math.round(r.proxyShare * 100)}% of the year` : '', r.coverage < 0.97 ? `prices for ${fmt.pct(r.coverage, 0)} of holdings` : ''].filter(Boolean).join(' · ')
+      : `${r.years >= 1 ? 'Per year, ' : ''}since ${fdate(r.from)}`;
+    return `<tr><td><b>${isYears ? r.year : r.label}</b></td><td class="n ${cls(f)}">${fmt.spct(f)}</td><td class="n ${cls(bb)}">${fmt.spct(bb)}</td><td class="n ${cls(d)}">${fmt.pts(d)}</td><td style="color:var(--muted);font-size:12px">${n}</td></tr>`;
+  }).join('');
+  $('#tblYears').innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i && i < 4 ? 'n' : ''}" style="cursor:default">${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>`;
+  $('#rvTableHint').textContent = RV.mode === 'total' && RV.totalMissing.length ? `${RV.totalMissing.length} old tickers have no Yahoo prices; they're held at their last trade price` : 'Time-weighted, dividends and interest included';
+  RV.last = { D, rows, isYears, val };
+}
+function acSplitHTML() {
+  if (!calc) return '';
+  const t = calc.total, A = acSummary();
+  const incl = { eq: ['Total fund', 'Equities', 'Equities + fixed income'], fi: ['Total fund', 'Fixed income', 'Equities + fixed income'], mm: ['Total fund'], cash: ['Total fund'] };
+  return A.map((a) => `<div class="ac-card ${a.k}"><div class="ac-top"><i class="ac-dot ${a.k}"></i><b>${a.name}</b><span class="num">${fmt.pct(a.v / t)}</span></div>
+    <div class="ac-v num">${fmt.usd(a.v)}</div><div class="ac-what">${esc(a.what)}</div><div class="ac-note">${esc(a.note)}</div>
+    <div class="ac-in">In: ${incl[a.k].map((x) => `<span class="tag">${x}</span>`).join(' ')}</div></div>`).join('');
+}
+seg('rvMode', 'rvModeTmp', () => { RV.mode = S.rvModeTmp; store.set('rvMode', RV.mode); syncRvControls(); if (RV.loaded) drawReturns(); });
+seg('rvChart', 'rvChartTmp', () => { RV.chart = S.rvChartTmp; store.set('rvChart', RV.chart); syncRvControls(); if (RV.loaded) drawReturns(); });
+$('#rvMix').addEventListener('input', (e) => { RV.mix = String(e.target.value); syncRvControls(); clearTimeout(RV.t); RV.t = setTimeout(() => { store.set('rvMix', RV.mix); if (RV.loaded) drawReturns(); }, 60); });
+$$('.rv-presets [data-mix]').forEach((b) => b.addEventListener('click', () => { RV.mix = b.dataset.mix; store.set('rvMix', RV.mix); syncRvControls(); if (RV.loaded) drawReturns(); }));
+$('#rvFrom').addEventListener('change', (e) => { RV.from = +e.target.value; drawReturns(); });
+$('#rvTo').addEventListener('change', (e) => { RV.to = +e.target.value; drawReturns(); });
+$('#rvDiff').addEventListener('change', (e) => { RV.diff = e.target.checked; store.set('rvDiff', RV.diff); if (RV.loaded) drawReturns(); });
+$('#rvLabels').addEventListener('change', (e) => { RV.labels = e.target.checked; store.set('rvLabels', RV.labels); if (RV.loaded) drawReturns(); });
+$('#rvPng').addEventListener('click', () => {
+  const c = charts.chYears; if (!c) return;
+  const a = document.createElement('a');
+  a.href = c.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: getComputedStyle(document.body).backgroundColor });
+  a.download = `SMIF ${$('#rvTitle').textContent.replace(/\s*—\s*/g, ' - ').replace(/[^\w %/+-]+/g, '').replace(/\//g, '-').trim()}.png`; a.click();
+});
+$('#rvCsv').addEventListener('click', () => {
+  if (!RV.last) return;
+  const { D, rows, isYears, val } = RV.last;
+  const lines = [[isYears ? 'Year' : 'Period', D.label, D.bench, 'Difference (pts)', 'Partial', 'From', 'To'].join(',')];
+  rows.forEach((r) => lines.push([isYears ? r.year : r.label, (val(r, 'fund') * 100).toFixed(2) + '%', (val(r, 'bench') * 100).toFixed(2) + '%', ((val(r, 'fund') - val(r, 'bench')) * 100).toFixed(2), isYears && r.partial ? 'yes' : '', r.from || '', r.to || ''].map((x) => `"${String(x).replace(/"/g, '""')}"`).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  a.download = `SMIF ${$('#rvTitle').textContent.replace(/\s*—\s*/g, ' - ').replace(/[^\w %/+-]+/g, '').replace(/\//g, '-').trim()}.csv`; a.click();
+});
+
+function acTag(ac) {
+  const k = { Equity: 'eq', 'Fixed Income': 'fi', 'Money Market': 'mm', Cash: 'cash' }[ac] || 'cash';
+  const n = { Equity: 'Equity', 'Fixed Income': 'Fixed income', 'Money Market': 'Money market' }[ac] || ac;
+  return `<span class="ac-tag ${k}"><i class="ac-dot ${k}"></i>${esc(n)}</span>`;
+}
+function fillAcStrips() {
+  if (!calc) return;
+  const h = acStripHTML();
+  $$('.ac-strip-slot').forEach((el) => { if (el.closest('.view.active')) el.innerHTML = h; });
+}

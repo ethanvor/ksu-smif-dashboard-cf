@@ -28,7 +28,7 @@ const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 function label(act, note) {
   const n = String(note || '').toUpperCase();
   if (act === 'Buy') return 'Buy';
-  if (act === 'Sell') return 'Sell';
+  if (act === 'Sell') return n.includes('CASH IN LIEU') ? 'Cash in lieu' : 'Sell';
   if (act === 'Split') return n.includes('STOCK DIVIDEND') ? 'Stock dividend' : 'Split';
   if (n.includes('SPINOFF') || n.includes('SPIN-OFF')) return 'Spin-off';
   if (n.includes('MERGER') || n.includes('ACQUISITION') || n.includes('TENDER')) return 'Merger';
@@ -93,6 +93,7 @@ export function buildHistory(rows, source = 'Transaction history') {
     const sign = SHARE_SIGN[act];
     if (sign == null || (q === 0 && act !== 'Split')) continue;
     const lotAdj = act.includes('Custodian Lot Adjustment');
+    const cil = act === 'Sell' && String(x.notes || '').toUpperCase().includes('CASH IN LIEU'); // fractional share paid out in cash, not a trade
     const before = s.qty;
     if (sign > 0) {
       if (act === 'Buy' || act.startsWith('Income (Reinvested') || act.startsWith('Credit')) s.cost += amt;
@@ -104,7 +105,7 @@ export function buildHistory(rows, source = 'Transaction history') {
       if (act === 'Sell') {
         const g = amt - avg * take;
         s.realized += g; totals.realized += g;
-        s.sold += amt; totals.sells += amt;
+        if (!cil) { s.sold += amt; totals.sells += amt; }
         s.cost -= avg * take;
       } else s.cost -= amt || avg * take;
       s.qty -= q;
@@ -113,7 +114,7 @@ export function buildHistory(rows, source = 'Transaction history') {
     if (lotAdj) continue; // Schwab cost-basis resets: no change in what we own
     const type = label(act, x.notes);
     if (type === 'Dividend reinvested') continue; // tiny share amounts; shown in dividends instead
-    if (act === 'Buy' || act === 'Sell') totals.trades++;
+    if (type === 'Buy' || type === 'Sell') totals.trades++;
     s.trades.push({ date: day, type, shares: +q.toFixed(4), price: q && amt ? +(amt / q).toFixed(4) : null, amount: +amt.toFixed(2), after: +Math.max(0, s.qty).toFixed(4) });
   }
   Object.values(S).forEach((s) => {

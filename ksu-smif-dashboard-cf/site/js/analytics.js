@@ -406,20 +406,9 @@ export function applyTrades(port, trades) {
         };
         p.holdings.push(h);
       }
-      if (t.funding !== 'new') {
-        let need = amt;
-        const fromCash = Math.min(need, Math.max(0, p.cash));
-        p.cash -= fromCash;
-        need -= fromCash;
-        const mm = p.holdings.find((x) => x.ticker === 'SNOXX');
-        if (need > 0 && mm) {
-          const px = mm.price || 1;
-          const take = Math.min(need, mm.quantity * px);
-          mm.quantity -= take / px;
-          need -= take;
-        }
-        if (need > 0.005) { p.cash -= need; notes.push({ level: 'bad', text: `Not enough cash & money market to pay for ${t.ticker} — short by $${need.toLocaleString(undefined, { maximumFractionDigits: 0 })}.` }); }
-      }
+      // buys are paid from cash only (the money market fund is not touched)
+      p.cash -= amt;
+      if (p.cash < -0.005) notes.push({ level: 'bad', text: `Not enough cash to pay for ${t.ticker} — cash would be ${'-$' + Math.abs(p.cash).toLocaleString(undefined, { maximumFractionDigits: 0 })}. Add a sell to fund it.` });
     } else {
       if (!h) { notes.push({ level: 'bad', text: `Can't sell ${t.ticker}: we don't own it.` }); continue; }
       const q = Math.min(t.shares, +h.quantity);

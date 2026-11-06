@@ -1,5 +1,5 @@
 // KSU SMIF Dashboard — app shell, data loading, views.
-import { gicsFor } from './gics.js';
+import { gicsFor, fullIndustry } from './gics.js';
 import {
   computePortfolio, symbolStats, portfolioStats, windowBacktest, windowAsHeld, actualBacktest, applyTrades, periodReturns, weightedBeta,
   fmt, cls, toGics, SECTORS, CASH_LIKE,
@@ -2178,4 +2178,197 @@ document.addEventListener('scroll', (e) => { if (e.target !== document && tipFor
     refreshAll();
   }, 15 * 60 * 1000); // every 15 min (Netlify credits); CDN cache is 5 min
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.api) checkMaster(); });
+})();
+
+// ======================================================================
+// Scrappy AI — portfolio assistant (answers are generated on the server from the fund data we send)
+// ======================================================================
+const SC = { open: false, msgs: store.get('scrappyChat', []), busy: false };
+const STOP = new Set('a an the and or but if is are was were be been being do does did have has had having we our us i me my you your it its this that these those of on in to for from with about at by as into over under than then there here what which who whom whose when where why how any all some more most much many can could should would will shall may might must not no yes buy sell sold bought own owned owning hold held holding stock stocks share shares position positions portfolio fund smif good bad think like right now today currently current price prices trade trades trading add trim sector sectors weight weights compare versus vs ever before previously still also just really please tell show give analysis analyze long short term year years month months company companies inc corp invest investing investment worth time again would'.split(' '));
+const NAME_STOP = new Set('the american first general united international national global new bank capital financial group holdings company corporation corp inc ltd plc co class trust energy home digital royal southern western eastern northern public service health technologies systems industries'.split(' '));
+function normName(n) { return String(n || '').toLowerCase().replace(/&/g, ' and ').replace(/\b(inc|corp|corporation|company|co|holdings|holding|group|plc|ltd|limited|class [abc]|the|n\.?v|s\.?a|l\.?p|com)\b\.?/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); }
+function scrappyIndex() {
+  if (SC.index) return SC.index;
+  const m = new Map();
+  const put = (t, name, src) => { if (!t || t === 'SNOXX' || CASH_LIKE.has(t)) return; const e = m.get(t) || { t, name: '' }; if (!e.name && name) e.name = name; e[src] = true; m.set(t, e); };
+  (S.base.spxConstituents || []).forEach((x) => put(x.ticker, x.name, 'spx'));
+  Object.values(S.hist?.tickers || {}).forEach((x) => put(x.ticker, x.name, 'hist'));
+  S.base.holdings.forEach((h) => put(h.ticker, h.name, 'held'));
+  const list = [...m.values()].map((e) => ({ ...e, nn: normName(e.name), first: normName(e.name).split(' ')[0] || '' }));
+  SC.index = { map: m, list };
+  return SC.index;
+}
+async function scrappyEntities(q) {
+  const { map, list } = scrappyIndex();
+  const found = [];
+  const add = (t) => { if (t && !found.includes(t) && found.length < 3) found.push(t); };
+  // $TSLA or bare upper-case tickers we know
+  (q.match(/\$[A-Za-z.]{1,6}\b/g) || []).forEach((x) => add(x.slice(1).toUpperCase()));
+  (q.match(/\b[A-Z][A-Z.]{0,5}\b/g) || []).forEach((x) => { if (map.has(x) && !['A', 'I', 'IT', 'ON', 'ALL', 'ARE', 'NOW', 'BIG', 'KEY', 'SO', 'O'].includes(x)) add(x); });
+  // nicknames that aren't in the official names
+  const ALIAS = { google: 'GOOGL', youtube: 'GOOGL', facebook: 'META', instagram: 'META', whatsapp: 'META', chase: 'JPM', coke: 'KO', 'coca cola': 'KO', 'coca-cola': 'KO', pepsi: 'PEP', 'j&j': 'JNJ', 'johnson and johnson': 'JNJ', 'p&g': 'PG', 'procter': 'PG', 'berkshire': 'BRK.B', 'big blue': 'IBM', 'mickey': 'DIS', disney: 'DIS', 'wells fargo': 'WFC', 'goldman': 'GS', 'morgan stanley': 'MS', 'bofa': 'BAC', 'bank of america': 'BAC', 'exxon': 'XOM', 'chevron': 'CVX', 'lilly': 'LLY', 'eli lilly': 'LLY', 'nvidia': 'NVDA', 'microsoft': 'MSFT', 'amazon': 'AMZN', 'tesla': 'TSLA', 'netflix': 'NFLX', 'the s&p': 'SPY', 's&p 500': 'SPY' };
+  const qlow = ' ' + q.toLowerCase().replace(/[^a-z0-9&\- ]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  Object.entries(ALIAS).forEach(([k, t]) => { if (qlow.includes(' ' + k + ' ')) add(t); });
+  // company names ("apple", "home depot", "starbucks")
+  const ql = ' ' + normName(q) + ' ';
+  const hits = list.filter((e) => e.nn && (ql.includes(' ' + e.nn + ' ') || (e.first.length >= 4 && !NAME_STOP.has(e.first) && ql.includes(' ' + e.first + ' '))));
+  hits.sort((a, b) => (b.held ? 4 : 0) + (b.hist ? 2 : 0) + b.nn.length / 100 - ((a.held ? 4 : 0) + (a.hist ? 2 : 0) + a.nn.length / 100)).forEach((e) => add(e.t));
+  // last resort: ask Yahoo's search about the leftover words
+  if (!found.length && S.api) {
+    const words = normName(q).split(' ').filter((w) => w.length >= 3 && !STOP.has(w)).slice(0, 2);
+    for (const w of words) {
+      try {
+        const r = await getJSON(`/api/profile?q=${encodeURIComponent(w)}`, {}, 6000);
+        const top = (r.results || []).find((x) => normName(x.name).includes(w) || x.symbol.toLowerCase() === w);
+        if (top) add(top.symbol.toUpperCase());
+      } catch { /* ignore */ }
+    }
+  }
+  return found;
+}
+async function scrappyStockFacts(t) {
+  let m = S.market[t], prof = null;
+  if (S.api) {
+    const [mr, pr] = await Promise.allSettled([
+      m ? null : getJSON(`/api/market?symbols=${encodeURIComponent(t)}&range=1y`, {}, 15000),
+      getJSON(`/api/profile?symbol=${encodeURIComponent(t)}`, {}, 12000),
+    ]);
+    if (mr.status === 'fulfilled' && mr.value) mr.value.data.forEach((d) => { if (d && !d.error && d.closes?.length) S.market[d.symbol.toUpperCase()] = d; });
+    if (pr.status === 'fulfilled') prof = pr.value;
+    m = S.market[t];
+    if (m && S.market.SPY && !S.stats[t]) S.stats[t] = symbolStats(m, S.market.SPY, rf());
+  }
+  const held = S.base.holdings.find((h) => h.ticker === t);
+  const row = calc.rows.find((r) => r.ticker === t);
+  const st = S.stats[t], p = prof || {};
+  const g = gicsFor(held, prof, held?.sector || (p.sector ? toGics(p.sector) : (S.base.spxConstituents || []).find((x) => x.ticker === t)?.sector));
+  const spx = (S.base.spxConstituents || []).find((x) => x.ticker === t);
+  const L = [`## ${t} — ${p.name || held?.name || spx?.name || m?.name || t}`];
+  L.push(`GICS: ${g.sector || '?'} / ${g.industry || p.industry || '?'}${g.source === 'mapped' ? ' (mapped from Yahoo)' : ''}. ${spx ? `In S&P 500 at ${fmt.pct(spx.weight, 2)} weight.` : 'Not in the S&P 500 list.'}`);
+  const price = m?.price ?? held?.price;
+  if (price != null) L.push(`Price ${fmt.usdC(price)}${m ? ' (live, delayed)' : ' (workbook)'}.`);
+  if (row) L.push(`WE HOLD IT: ${fmt.n(row.quantity, 2)} sh, value ${fmt.usd(row.value)}, ${fmt.pct(row.weight, 2)} of fund, avg cost ${fmt.usdC(row.avgCost)}, gain ${fmt.spct(row.ret)}, first bought ${row.purchaseDate || '?'}.`);
+  const hh = S.hist?.tickers?.[t];
+  if (hh) {
+    const tr = hh.trades.filter((x) => x.type === 'Buy' || x.type === 'Sell');
+    L.push(`Trade history: owned ${hh.periods.map((x) => `${x.from} to ${x.to || 'now'}`).join('; ')}. ${tr.length} buys/sells. Bought $${Math.round(hh.bought)}, sold $${Math.round(hh.sold)}, realized gain $${Math.round(hh.realized)}, dividends $${Math.round(hh.dividends)}.`);
+    L.push('Trades: ' + tr.slice(-12).map((x) => `${x.date} ${x.type} ${fmt.n(x.shares, 2)} @ ${fmt.usdC(x.price)}`).join('; '));
+  } else if (S.hist) L.push('Trade history: NEVER OWNED in the Schwab record.');
+  if (st) L.push(`1Y stats vs S&P: beta ${fmt.x(st.beta)}, volatility ${fmt.pct(st.vol)}, Sharpe ${fmt.x(st.sharpe)}, max drawdown ${fmt.pct(st.maxDD)}, alpha ${fmt.spct(st.alpha)}, correlation ${fmt.x(st.corr)}, 1Y return ${fmt.spct(st.periods?.['1Y'])}, YTD ${fmt.spct(st.periods?.YTD)}, 52w range ${fmt.usdC(st.low52)}–${fmt.usdC(st.high52)}.`);
+  if (S.pstats && st) { const c = corrToPortfolio(t); if (c != null) L.push(`Correlation to SMIF portfolio (1Y daily): ${fmt.x(c)}.`); }
+  const f = [];
+  const put = (k, v) => { if (v != null && v !== '—') f.push(`${k} ${v}`); };
+  put('Mkt cap', p.marketCap ? fmt.big(p.marketCap) : null); put('P/E', p.trailingPE != null ? fmt.x(p.trailingPE, 1) : null); put('Fwd P/E', p.forwardPE != null ? fmt.x(p.forwardPE, 1) : null);
+  put('PEG', p.pegRatio != null ? fmt.x(p.pegRatio) : null); put('EV/EBITDA', p.evToEbitda != null ? fmt.x(p.evToEbitda, 1) : null); put('P/B', p.priceToBook != null ? fmt.x(p.priceToBook) : null);
+  put('Div yield', p.dividendYield != null ? fmt.pct(p.dividendYield, 2) : null); put('Payout', p.payoutRatio != null ? fmt.pct(p.payoutRatio, 0) : null); put('ROE', p.roe != null ? fmt.pct(p.roe) : null);
+  put('Net margin', p.profitMargin != null ? fmt.pct(p.profitMargin) : null); put('Op margin', p.operatingMargin != null ? fmt.pct(p.operatingMargin) : null);
+  put('Rev growth YoY', p.revenueGrowth != null ? fmt.spct(p.revenueGrowth) : null); put('Debt/Equity', p.debtToEquity != null ? (p.debtToEquity / 100).toFixed(2) + 'x' : null);
+  put('Analyst target', p.targetMeanPrice != null ? `${fmt.usdC(p.targetMeanPrice)} (${p.analystCount || 0} analysts${price ? `, ${fmt.spct(p.targetMeanPrice / price - 1)} vs price` : ''})` : null);
+  put('Yahoo beta (5y)', p.beta != null ? fmt.x(p.beta) : null);
+  if (f.length) L.push('Fundamentals (Yahoo): ' + f.join(', ') + '.');
+  if (p.summary) L.push('Business: ' + String(p.summary).slice(0, 500));
+  if (g.sector && calc.sectors[g.sector]) {
+    const ours = calc.sectors[g.sector].wEq || 0, bw = S.base.benchmark.sectorWeights[g.sector];
+    L.push(`Fit: our ${g.sector} weight ${fmt.pct(ours)} of equities vs S&P ${bw != null ? fmt.pct(bw) : '?'} (${bw != null ? fmt.pts(ours - bw) : ''}). Holdings in this sector: ${calc.rows.filter((r) => r.sector === g.sector && r.assetClass === 'Equity').map((r) => `${r.ticker} ${fmt.pct(r.weight, 1)}`).join(', ') || 'none'}.`);
+  } else if (g.sector) L.push(`Fit: we hold nothing in ${g.sector}; S&P weight ${fmt.pct(S.base.benchmark.sectorWeights[g.sector] || 0)}.`);
+  return L.join('\n');
+}
+async function scrappyContext(q) {
+  const c = calc, bw = S.base.benchmark.sectorWeights;
+  const L = [];
+  L.push(`# SMIF fund snapshot (holdings as of ${S.base.meta?.asOf || '?'}; prices ${S.live ? 'live, delayed' : 'from the workbook'})`);
+  L.push(`Total value ${fmt.usd(c.total)}. Cash ${fmt.usd(c.cash)} (${fmt.pct(c.cash / c.total, 2)}) — buys are paid from this cash only. Equities ${fmt.usd(c.eqValue)} (${fmt.pct(c.eqValue / c.total)}), fixed income ${fmt.usd(c.fiValue)}, money market ${fmt.usd(c.mmValue)}. ${c.rows.length} positions. Limits: max 10% per position; sectors within ±5 pts of S&P.`);
+  if (S.pstats) {
+    const betas = Object.fromEntries(Object.entries(S.stats).map(([k, v]) => [k, v?.beta]));
+    L.push(`Portfolio risk (1Y daily, current holdings): beta ${fmt.x(weightedBeta(c, betas))}, volatility ${fmt.pct(S.pstats.vol)}, Sharpe ${fmt.x(S.pstats.sharpe)}, max drawdown ${fmt.pct(S.pstats.maxDD)}, 1Y return at current weights ${fmt.spct(S.pstats.totalRet)}; S&P 500 1Y ${fmt.spct(S.pstats.benchStats?.totalRet)}, S&P vol ${fmt.pct(S.pstats.benchStats?.vol)}.`);
+  }
+  if (S.perfBt?.bt) { const b = S.perfBt.bt, w = perfWindowStats(b, 0, b.dates.length - 1); L.push(`Actual fund performance shown on the overview chart (${b.dates[0]} to ${b.dates[b.dates.length - 1]}, time-weighted, from Schwab transactions): SMIF ${fmt.spct(w.sm)} vs S&P 500 ${fmt.spct(w.sp)}${w.smA != null ? `, annualized ${fmt.spct(w.smA)} vs ${fmt.spct(w.spA)}` : ''}.`); }
+  L.push('\n# Holdings (ticker | name | GICS sector / industry | shares | price | value | % of fund | avg cost | gain since purchase | first bought | 1Y beta)');
+  [...c.rows].sort((a, b) => b.value - a.value).forEach((r) => L.push(`${r.ticker} | ${r.name} | ${r.assetClass === 'Equity' ? `${r.sector} / ${fullIndustry(r.industry)}` : r.assetClass} | ${fmt.n(r.quantity, 2)} | ${fmt.usdC(r.price)} | ${fmt.usd(r.value)} | ${fmt.pct(r.weight, 2)} | ${fmt.usdC(r.avgCost)} | ${fmt.spct(r.ret)} | ${r.purchaseDate || '?'} | ${S.stats[r.ticker]?.beta != null ? fmt.x(S.stats[r.ticker].beta) : '?'}`));
+  L.push('\n# Sector weights in the equity sleeve (ours vs S&P 500, difference in pts)');
+  Object.keys(bw).forEach((s) => { const o = c.sectors[s]?.wEq || 0; L.push(`${s}: ${fmt.pct(o)} vs ${fmt.pct(bw[s])} (${fmt.pts(o - bw[s])})`); });
+  if (S.hist) {
+    const former = Object.values(S.hist.tickers).filter((t) => t.ticker !== 'SNOXX' && !t.periods.some((p) => !p.to));
+    L.push(`\n# Former holdings (sold out) — ticker name: periods owned; realized gain`);
+    former.sort((a, b) => (b.periods.at(-1)?.to || '').localeCompare(a.periods.at(-1)?.to || '')).forEach((t) => L.push(`${t.ticker} ${t.name || ''}: ${t.periods.map((p) => `${p.from.slice(0, 7)}→${p.to.slice(0, 7)}`).join(', ')}; realized $${Math.round(t.realized)}`));
+    const recent = Object.values(S.hist.tickers).flatMap((t) => t.trades.filter((x) => x.type === 'Buy' || x.type === 'Sell').map((x) => ({ ...x, t: t.ticker }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+    L.push('\n# 15 most recent trades');
+    recent.forEach((x) => L.push(`${x.date} ${x.type} ${fmt.n(x.shares, 2)} ${x.t} @ ${fmt.usdC(x.price)}`));
+    L.push(`Schwab record covers ${S.hist.from || '?'} to ${S.hist.to || '?'}.`);
+  }
+  const ents = await scrappyEntities(q);
+  if (ents.length) {
+    L.push('\n# Details for tickers in this question');
+    for (const t of ents) L.push(await scrappyStockFacts(t));
+  }
+  return { text: L.join('\n'), ents };
+}
+function scrappyMd(t) {
+  // tiny, safe markdown: escape first, then **bold**, bullets, line breaks
+  const lines = esc(t).split('\n');
+  let html = '', inList = false;
+  for (let ln of lines) {
+    ln = ln.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|\s)\*(\S.+?)\*(?=\s|$)/g, '$1<i>$2</i>').replace(/^#{1,4}\s*(.+)$/, '<b>$1</b>');
+    const li = ln.match(/^\s*(?:[-•*]|\d+[.)])\s+(.*)$/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    html += ln.trim() ? `<p>${ln}</p>` : '';
+  }
+  return html + (inList ? '</ul>' : '');
+}
+function scrappyRender() {
+  const box = $('#scBody');
+  if (!box) return;
+  if (!SC.msgs.length) {
+    box.innerHTML = `<div class="sc-hello"><img src="img/owl.svg" alt="" /><b>Hi, I'm Scrappy.</b><span>Ask me about SMIF's holdings, history, risk, or whether a stock fits the fund.</span>
+      <div class="sc-chips">${['Have we ever owned Apple?', 'Is Starbucks a good buy for us right now?', 'Which sectors are we most underweight vs the S&P?', 'What are our riskiest positions?', 'What did we sell most recently?'].map((x) => `<button class="sc-chip">${x}</button>`).join('')}</div></div>`;
+    $$('.sc-chip', box).forEach((b) => b.addEventListener('click', () => scrappyAsk(b.textContent)));
+    return;
+  }
+  box.innerHTML = SC.msgs.map((m) => m.role === 'user' ? `<div class="sc-msg me">${esc(m.content)}</div>`
+    : `<div class="sc-msg bot${m.error ? ' err' : ''}">${m.error ? esc(m.content) : scrappyMd(m.content)}${m.meta ? `<div class="sc-meta">${esc(m.meta)}</div>` : ''}</div>`).join('')
+    + (SC.busy ? `<div class="sc-msg bot sc-typing"><span></span><span></span><span></span><em>${esc(SC.busyText || 'Thinking…')}</em></div>` : '');
+  box.scrollTop = box.scrollHeight;
+}
+async function scrappyAsk(q) {
+  q = String(q || '').trim();
+  if (!q || SC.busy) return;
+  if (!S.api) { SC.msgs.push({ role: 'user', content: q }, { role: 'assistant', content: 'Scrappy needs the live site (the server functions) to answer. Open the deployed dashboard to chat.', error: true }); scrappyRender(); return; }
+  const history = SC.msgs.filter((m) => !m.error).slice(-6).map(({ role, content }) => ({ role, content }));
+  SC.msgs.push({ role: 'user', content: q });
+  SC.busy = true; SC.busyText = 'Pulling fund data…';
+  $('#scInput').value = ''; scrappyRender();
+  try {
+    const ctx = await scrappyContext(q);
+    SC.busyText = ctx.ents.length ? `Analyzing ${ctx.ents.join(', ')}…` : 'Thinking…'; scrappyRender();
+    const r = await getJSON('/api/scrappy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: q, history, context: ctx.text }) }, 60000);
+    SC.msgs.push({ role: 'assistant', content: r.answer || '(no answer)', meta: [r.model, ctx.ents.length ? 'looked up ' + ctx.ents.join(', ') : ''].filter(Boolean).join(' · ') });
+  } catch (e) {
+    SC.msgs.push({ role: 'assistant', content: e.name === 'AbortError' ? 'That took too long — try again or ask a shorter question.' : String(e.message || e), error: true });
+  }
+  SC.busy = false;
+  SC.msgs = SC.msgs.slice(-30);
+  store.set('scrappyChat', SC.msgs);
+  scrappyRender();
+}
+(function scrappyMount() {
+  const fab = document.createElement('button');
+  fab.id = 'scFab'; fab.className = 'sc-fab'; fab.title = 'Ask Scrappy AI';
+  fab.innerHTML = '<img src="img/owl.svg" alt="" /><span>Ask Scrappy</span>';
+  const panel = document.createElement('div');
+  panel.id = 'scPanel'; panel.className = 'sc-panel'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Scrappy AI');
+  panel.innerHTML = `<div class="sc-head"><img src="img/owl.svg" alt="" /><div><b>Scrappy AI</b><small>SMIF portfolio assistant</small></div>
+      <button class="btn sm" id="scClear" title="Start a new chat">New chat</button><button class="btn sm" id="scClose" title="Close">✕</button></div>
+    <div class="sc-body" id="scBody"></div>
+    <form class="sc-foot" id="scForm"><textarea id="scInput" rows="1" maxlength="800" placeholder="Ask about our holdings, history, or a stock…"></textarea><button class="btn primary" id="scSend" type="submit">Send</button></form>
+    <div class="sc-note">Uses SMIF fund data + Yahoo Finance. AI can make mistakes — verify numbers before you present. Not investment advice.</div>`;
+  document.body.append(fab, panel);
+  const open = (v) => { SC.open = v; panel.classList.toggle('open', v); fab.classList.toggle('hide', v); document.body.classList.toggle('sc-lock', v && innerWidth < 640); if (v) { scrappyRender(); setTimeout(() => $('#scInput').focus(), 50); } };
+  fab.addEventListener('click', () => open(true));
+  $('#scClose').addEventListener('click', () => open(false));
+  $('#scClear').addEventListener('click', () => { SC.msgs = []; store.set('scrappyChat', []); scrappyRender(); });
+  $('#scForm').addEventListener('submit', (e) => { e.preventDefault(); scrappyAsk($('#scInput').value); });
+  $('#scInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); scrappyAsk($('#scInput').value); } });
+  $('#scInput').addEventListener('input', (e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px'; });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && SC.open) open(false); });
 })();

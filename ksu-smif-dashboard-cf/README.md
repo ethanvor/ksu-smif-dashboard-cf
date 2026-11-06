@@ -64,3 +64,11 @@ Things that work differently on Cloudflare:
 - **Netlify Forms** don't exist on Cloudflare. Use a free form service (e.g. Formspree), or ask me for a small Pages Function.
 - **Netlify Functions** need porting to `functions/` (like the SMIF ones).
 - **Custom domain:** project → **Custom domains → Set up a domain**. If the domain's DNS is at Netlify, you'll add Cloudflare's records at your registrar. That usually takes minutes, occasionally a few hours.
+
+## Scrappy AI (portfolio assistant)
+- The **Ask Scrappy** button (bottom-right) opens a chat limited to the fund: holdings, history, risk, and whether a stock fits SMIF.
+- For each question the dashboard gathers the fund data (holdings, sector weights vs S&P, risk stats, former holdings, recent trades) plus details on any company it recognizes, and sends it to `/api/scrappy` (`functions/api/scrappy.js`).
+- Runs on **Cloudflare Workers AI** (Llama 3.1 8B) through the `"ai": { "binding": "AI" }` line in `wrangler.jsonc`. It's free up to Cloudflare's daily allowance (10,000 "neurons"), which works out to roughly 250–290 questions a day. The allowance resets at midnight UTC. Each device is limited to 40 questions a day.
+- Guardrails (`lib/guard.js`): jailbreak / prompt-injection attempts ("ignore your instructions", "what's your system prompt", role-play, "developer mode", fake system messages, encoded text) and clearly unrelated requests are refused before reaching the AI, so they don't use the allowance. Earlier attempts are dropped from the chat history, role markers are stripped from the fund data, and answers that leak the instructions are replaced with a refusal. To adjust, edit the patterns in `lib/guard.js`.
+- Optional, paid: to use OpenAI instead, add a **Secret** `OPENAI_API_KEY` and a **Variable** `OPENAI_MODEL` (a current model name from OpenAI's pricing page) under Settings → Variables and Secrets.
+- To change how Scrappy behaves (scope, tone, the fund's rules), edit the `SYSTEM` text at the top of `functions/api/scrappy.js`.

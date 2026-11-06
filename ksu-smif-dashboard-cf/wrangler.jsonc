@@ -18,5 +18,6 @@
   "kv_namespaces": [
     { "binding": "SMIF_KV", "id": "28159bcb14dc4e5d9cb1c9805231f154" }
   ],
+  "ai": { "binding": "AI" },
   "observability": { "enabled": true }
 }

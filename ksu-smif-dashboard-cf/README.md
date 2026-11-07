@@ -78,3 +78,6 @@ Things that work differently on Cloudflare:
 - Order of sources: **Yahoo Finance** → **Tiingo** (second source, used only for stocks Yahoo is missing or gets wrong) → **estimated** from our own trade prices.
 - To turn on Tiingo (free): sign up at tiingo.com, copy your API token (Profile → API → Token), then in Cloudflare open the `smif` app → Settings → Variables and Secrets → Add → Type **Secret**, Name `TIINGO_KEY`, paste the token → Deploy. Free plan: 500 different tickers a month, 50 requests an hour, 1,000 a day. Each ticker is fetched once and saved in KV forever, so this stays far under the limits.
 - The "Price data check" card on the Performance tab lists where every price history came from.
+
+## Easter egg
+A little 8-bit owl (`site/js/owl.js`) flies a few laps around the screen: click the KSU logo in the header 3 times, or type `owls` or `hoot` anywhere outside a text box. It also flies by on its own once a day, about 40 seconds into a visit. Click it while it flies for a hoot. It never appears for people who have reduced motion turned on.

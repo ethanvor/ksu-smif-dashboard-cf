@@ -641,3 +641,11 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 .dq-sum b { font-size: 22px; } .dq-sum span { font-size: 12px; color: var(--muted); } .warn-t { color: var(--warn); }
 .dq-p { font-size: 13px; color: var(--ink-2); line-height: 1.55; margin: 12px 0; }
 @media (max-width: 720px) { .dq-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* ---------- 8-bit owl easter egg ---------- */
+.pix-owl { position: fixed; left: 0; top: 0; z-index: 2000; width: 48px; height: 36px; cursor: pointer; filter: drop-shadow(0 3px 4px rgba(0,0,0,.35)); will-change: transform; }
+.pix-owl .f { position: absolute; inset: 0; image-rendering: pixelated; }
+.pix-owl .up { animation: owlA .3s infinite; } .pix-owl .down { animation: owlB .3s infinite; }
+@keyframes owlA { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes owlB { 0%, 49.9% { opacity: 0; } 50%, 100% { opacity: 1; } }
+.pix-hoot { position: fixed; z-index: 2001; transform: translateX(-50%); background: var(--gold); color: #1a1714; font: 800 12px ui-monospace, Menlo, monospace; padding: 5px 9px; border-radius: 4px; box-shadow: 3px 3px 0 #1a1714; pointer-events: none; animation: hootUp 1.6s ease-out forwards; white-space: nowrap; }
+@keyframes hootUp { from { opacity: 0; margin-top: 6px; } 15% { opacity: 1; margin-top: 0; } 80% { opacity: 1; } to { opacity: 0; margin-top: -14px; } }

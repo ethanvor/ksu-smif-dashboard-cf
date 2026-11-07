@@ -316,11 +316,16 @@ export function actualBacktest(hist, market, startDate) {
     return q;
   };
   // price on a date; if missing (delisted / not loaded) hold the last known price, else the last trade price
-  const lastPx = {};
+  const lastPx = {}, estPath = {};
   const priceOn = (t, d) => {
     const px = pxMaps[t.ticker]?.map.get(d);
     if (px != null) { lastPx[t.ticker] = { px, adj: true }; return lastPx[t.ticker]; }
     if (lastPx[t.ticker]) return lastPx[t.ticker];
+    if (!pxMaps[t.ticker]) { // no Yahoo history at all (delisted): estimate from our trade prices
+      estPath[t.ticker] = estPath[t.ticker] === undefined ? tradePricePath(t) : estPath[t.ticker];
+      const e = estPath[t.ticker]?.(d);
+      if (e != null) return { px: e, adj: false, est: true };
+    }
     const tp = [...t.trades].reverse().find((x) => x.date <= d && x.price)?.price;
     return tp != null ? { px: tp, adj: false } : null;
   };
@@ -346,7 +351,7 @@ export function actualBacktest(hist, market, startDate) {
       if (!p0) continue;
       const qa = p0.adj ? adjShares(t, d0) : q0;
       const p1raw = pxMaps[t.ticker]?.map.get(d1);
-      const p1 = p0.adj ? (p1raw ?? p0.px) : p0.px; // no data → no price change
+      const p1 = p0.est ? estPath[t.ticker](d1) : p0.adj ? (p1raw ?? p0.px) : p0.px; // no data → estimated path, else no change
       v0 += qa * p0.px;
       chg += qa * (p1 - p0.px);
     }
@@ -458,6 +463,28 @@ export function assetClassOf(ticker, name, current) {
   return 'Equity';
 }
 
+/**
+ * For stocks Yahoo no longer has (delisted, merged, acquired), estimate a weekly price path from our own trade
+ * prices: geometric steps between each known buy/sell price, flat before the first and after the last.
+ * Better than holding them flat, which would drop their whole gain or loss from the record.
+ */
+export function tradePricePath(t) {
+  const pts = t.trades.filter((x) => x.price > 0 && (x.type === 'Buy' || x.type === 'Sell' || x.type === 'Cash in lieu')).map((x) => [x.date, x.price]).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  if (!pts.length) return null;
+  const ms = (d) => Date.parse(d);
+  return (d) => {
+    if (d <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (d <= pts[i][0]) {
+        const [d0, p0] = pts[i - 1], [d1, p1] = pts[i];
+        const f = (ms(d) - ms(d0)) / Math.max(1, ms(d1) - ms(d0));
+        return p0 * Math.pow(p1 / p0, f);
+      }
+    }
+    return pts[pts.length - 1][1];
+  };
+}
+
 export function sleeveSeries(hist, market, currentClasses = {}) {
   const spy = market.SPY;
   if (!hist || !spy?.dates?.length) return null;
@@ -475,13 +502,14 @@ export function sleeveSeries(hist, market, currentClasses = {}) {
     const m = market[t.ticker];
     if (m?.dates?.length) P[t.ticker] = { adj: adjMap(m), raw: new Map(m.dates.map((d, i) => [d, (m.rawCloses || m.closes)[i]])), splits: m.splits || [] };
   });
-  const lastRaw = {};
+  const lastRaw = {}, est = {};
+  tick.forEach(({ t }) => { if (!P[t.ticker]) est[t.ticker] = tradePricePath(t); });
   const rawOn = (t, d) => {
     const v = P[t.ticker]?.raw.get(d);
     if (v != null) return (lastRaw[t.ticker] = { px: v, adj: true });
     if (lastRaw[t.ticker]) return lastRaw[t.ticker];
-    const tp = [...t.trades].reverse().find((x) => x.date <= d && x.price)?.price ?? t.trades.find((x) => x.price)?.price;
-    return tp != null ? { px: tp, adj: false } : null;
+    const e = est[t.ticker]?.(d);
+    return e != null ? { px: e, adj: false, est: true } : null;
   };
   const shares = (t, d, adj) => {
     let q = sharesOn(t, d);
@@ -492,24 +520,27 @@ export function sleeveSeries(hist, market, currentClasses = {}) {
   const W = []; // one entry per week
   for (let k = 1; k < dates.length; k++) {
     const d0 = dates[k - 1], d1 = dates[k];
-    const s = { 'Equity': [0, 0, 0], 'Fixed Income': [0, 0, 0] }; // [value, value × return, value with real prices]
+    const s = { 'Equity': [0, 0, 0, 0, []], 'Fixed Income': [0, 0, 0, 0, []] }; // [value, value × return, value priced, value estimated, estimated tickers]
     for (const { t, cls } of tick) {
       if (!sharesOn(t, d0)) continue;
       const p = rawOn(t, d0);
       if (!p) continue;
       const v = shares(t, d0, p.adj) * p.px;
       if (!(v > 0)) continue;
-      const r = p.adj ? ret(P[t.ticker]?.adj, d0, d1) : null;
+      let r = p.adj ? ret(P[t.ticker]?.adj, d0, d1) : null;
+      if (p.est) { const p1 = est[t.ticker](d1); r = p1 / p.px - 1; s[cls][3] += v; s[cls][4].push(t.ticker); }
       s[cls][0] += v;
       if (r != null) { s[cls][1] += v * r; s[cls][2] += v; }
     }
-    const sl = (x) => (x[2] > 0 ? { r: x[1] / x[2], v: x[0], cov: x[2] / x[0] } : x[0] > 0 ? { r: 0, v: x[0], cov: 0 } : null);
+    const sl = (x) => (x[2] > 0 ? { r: x[1] / x[2], v: x[0], cov: (x[2] - x[3]) / x[0], est: x[3] / x[0], estT: x[4] } : x[0] > 0 ? { r: 0, v: x[0], cov: 0, est: 0, estT: [] } : null);
     // money market + cash: value at the start of the week, return = interest and MMF dividends received during it
     const cv = Math.max(0, hist.cashSeries ? cashOn(hist, d0) : 0) + mmTick.reduce((a, t) => a + sharesOn(t, d0) * 1, 0);
     const cash = cv > 250 ? { r: cashIncomeIn(d0, d1) / cv, v: cv, cov: 1 } : null;
     W.push({ d0, d1, eq: sl(s['Equity']), fi: sl(s['Fixed Income']), cash, spy: ret(spyM, d0, d1) ?? 0, agg: ret(aggM, d0, d1), bil: ret(bilM, d0, d1) });
   }
-  return { dates, weeks: W, hasAgg: !!aggM, fiStart: W.find((w) => w.fi)?.d0 || null, cashStart: W.find((w) => w.cash)?.d0 || null };
+  // first purchase date of any bond fund (weekly returns begin with the following weekly bar)
+  const fiBuy = tick.filter((x) => x.cls === 'Fixed Income').map(({ t }) => t.trades.find((x) => x.type === 'Buy')?.date).filter(Boolean).sort()[0] || null;
+  return { dates, weeks: W, hasAgg: !!aggM, fiStart: fiBuy || W.find((w) => w.fi)?.d0 || null, fiFirstWeek: W.find((w) => w.fi)?.d0 || null, cashStart: W.find((w) => w.cash)?.d0 || null };
 }
 
 /**
@@ -525,9 +556,10 @@ export function viewWeeks(ss, mode, eqShare = 1) {
   const out = [];
   for (const w of ss.weeks) {
     let r = null, b = null, proxy = false, cov = 1, wEq = null;
-    if (mode === 'eq') { if (w.eq) { r = w.eq.r; b = w.spy; cov = w.eq.cov; } }
+    let est = 0, estT = [];
+    if (mode === 'eq') { if (w.eq) { r = w.eq.r; b = w.spy; cov = w.eq.cov; est = w.eq.est; estT = w.eq.estT; } }
     else if (mode === 'cash') { if (w.cash && w.bil != null) { r = w.cash.r; b = w.bil; } }
-    else if (mode === 'fi') { if (w.fi && w.agg != null) { r = w.fi.r; b = w.agg; cov = w.fi.cov; } }
+    else if (mode === 'fi') { if (w.fi && w.agg != null) { r = w.fi.r; b = w.agg; cov = w.fi.cov; est = w.fi.est; estT = w.fi.estT; } }
     else if (mode === 'actual') {
       const ve = w.eq?.v || 0, vf = w.fi?.v || 0;
       if (ve + vf > 0) {
@@ -545,7 +577,7 @@ export function viewWeeks(ss, mode, eqShare = 1) {
         cov = w.eq.cov;
       }
     }
-    out.push({ d0: w.d0, d1: w.d1, r, b, proxy, cov, wEq });
+    out.push({ d0: w.d0, d1: w.d1, r, b, proxy, cov, wEq, est, estT });
   }
   return out;
 }
@@ -556,13 +588,13 @@ export function calendarYears(weeks) {
   for (const w of weeks) {
     if (w.r == null) continue;
     const y = +w.d1.slice(0, 4);
-    const e = by.get(y) || { year: y, f: 1, b: 1, n: 0, proxy: 0, cov: 0, first: w.d0, last: w.d1 };
-    e.f *= 1 + w.r; e.b *= 1 + w.b; e.n++; e.proxy += w.proxy ? 1 : 0; e.cov += w.cov; e.last = w.d1;
+    const e = by.get(y) || { year: y, f: 1, b: 1, n: 0, proxy: 0, cov: 0, est: 0, estT: new Set(), first: w.d0, last: w.d1 };
+    e.f *= 1 + w.r; e.b *= 1 + w.b; e.n++; e.proxy += w.proxy ? 1 : 0; e.cov += w.cov; e.est += w.est || 0; (w.estT || []).forEach((x) => e.estT.add(x)); e.last = w.d1;
     by.set(y, e);
   }
   return [...by.values()].sort((a, b) => a.year - b.year).map((e) => ({
     year: e.year, fund: e.f - 1, bench: e.b - 1, diff: e.f - e.b, weeks: e.n, from: e.first, to: e.last,
-    partial: e.first > `${e.year}-01-08` || e.last < `${e.year}-12-24`, proxyShare: e.proxy / e.n, coverage: e.cov / e.n,
+    partial: e.first > `${e.year}-01-08` || e.last < `${e.year}-12-24`, proxyShare: e.proxy / e.n, coverage: e.cov / e.n, estShare: e.est / e.n, estTickers: [...e.estT],
   }));
 }
 
@@ -582,3 +614,29 @@ export function trailingPeriods(weeks, today = new Date()) {
     return { label, from: ws[0].d0, fund: f - 1, bench: b - 1, diff: f - b, fundAnn: ann(f), benchAnn: ann(b), years: yrs };
   });
 }
+
+/**
+ * Check a price history against what the fund actually paid or received in its own Schwab trades.
+ * Weekly bars: a trade inside a week should be close to that week's close or the week before's.
+ * Returns { checked, medianErr, ok } — ok means the series really is the stock we owned.
+ */
+export function verifyPrices(t, m, tol = 0.1) {
+  if (!m?.dates?.length) return { checked: 0, medianErr: null, ok: false, missing: true };
+  const raw = m.rawCloses || m.closes, sp = m.splits || [];
+  const errs = [];
+  for (const x of t.trades) {
+    if (!(x.type === 'Buy' || x.type === 'Sell') || !(x.price > 0)) continue;
+    let i = -1, lo = 0, hi = m.dates.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (m.dates[mid] <= x.date) { i = mid; lo = mid + 1; } else hi = mid - 1; }
+    if (i < 0 || x.date > addDays(m.dates[i], 7)) continue; // no bar covering that week
+    let f = 1; for (const [sd, ratio] of sp) if (sd > x.date) f *= ratio;
+    const expect = x.price / f;
+    const e = Math.min(...[raw[i], raw[i - 1]].filter((v) => v > 0).map((v) => Math.abs(v / expect - 1)));
+    if (isFinite(e)) errs.push(e);
+  }
+  if (!errs.length) return { checked: 0, medianErr: null, ok: true, unchecked: true };
+  errs.sort((a, b) => a - b);
+  const med = errs[errs.length >> 1];
+  return { checked: errs.length, medianErr: med, ok: med <= tol };
+}
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };

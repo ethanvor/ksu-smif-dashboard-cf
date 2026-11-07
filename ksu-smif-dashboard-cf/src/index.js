@@ -4,6 +4,7 @@ import * as market from '../functions/api/market.js';
 import * as profile from '../functions/api/profile.js';
 import * as portfolio from '../functions/api/portfolio.js';
 import * as scrappy from '../functions/api/scrappy.js';
+import * as prices from '../functions/api/prices.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -14,6 +15,7 @@ export default {
       if (url.pathname === '/api/profile') return request.method === 'GET' ? await profile.onRequestGet(context) : new Response('Method not allowed', { status: 405 });
       if (url.pathname === '/api/portfolio') return await portfolio.onRequest(context);
       if (url.pathname === '/api/scrappy') return await scrappy.onRequest(context);
+      if (url.pathname === '/api/prices') return await prices.onRequest(context);
     } catch (e) {
       return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 500, headers: { 'content-type': 'application/json' } });
     }

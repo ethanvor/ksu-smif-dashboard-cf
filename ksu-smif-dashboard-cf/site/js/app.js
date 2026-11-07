@@ -2,7 +2,7 @@
 import { gicsFor, fullIndustry } from './gics.js';
 import {
   computePortfolio, symbolStats, portfolioStats, windowBacktest, windowAsHeld, actualBacktest, applyTrades, periodReturns, weightedBeta,
-  fmt, cls, toGics, SECTORS, CASH_LIKE, sleeveSeries, viewWeeks, calendarYears, trailingPeriods, assetClassOf,
+  fmt, cls, toGics, SECTORS, CASH_LIKE, sleeveSeries, viewWeeks, calendarYears, trailingPeriods, assetClassOf, verifyPrices,
 } from './analytics.js';
 import { buildHistory, rowsFromSheet, looksLikeTransactions, heldSince, sharesOn } from './history.js';
 
@@ -381,6 +381,8 @@ async function loadFormerHoldings(start, long) {
   need.forEach((t) => tried[key].add(t));
   $('#perfStats').innerHTML = `<span>Loading prices for ${need.length} stocks we've since sold…</span>`;
   await fetchSeries(need, long ? '10y' : '1y', long ? '1wk' : '1d', into);
+  // same accuracy rule as the Performance tab: a history that doesn't match our Schwab trade prices is not used
+  need.forEach((t) => { const h = S.hist.tickers[t]; if (h && into[t] && !verifyPrices(h, into[t]).ok) delete into[t]; });
 }
 async function renderPerfChart() {
   // Without live prices there's nothing to compare over time: show the workbook's period returns instead
@@ -395,18 +397,25 @@ async function renderPerfChart() {
   const start = rangeStart(r);
   const long = r === '3Y' || r === '5Y' || r === '10Y' || (r === 'Custom' && start < (S.market.SPY.dates[0] || ''));
   $('#perfDates').style.display = r === 'Custom' ? '' : 'none';
-  if (long && !S.longLoaded) {
+  // 3Y and longer use the same checked weekly price store as the Performance tab, so both always agree
+  const shared = long && S.hist && S.api;
+  if (shared && !RV.loaded) {
+    $('#perfStats').innerHTML = '<span>Loading and checking weekly prices since 2009…</span>';
+    await loadAllHistory();
+    if (S.perfRange !== r || S.view !== 'overview') return;
+  }
+  if (long && !shared && !S.longLoaded) {
     $('#perfStats').innerHTML = '<span>Loading 10 years of weekly prices…</span>';
     await loadLongHistory();
     if (S.perfRange !== r || S.view !== 'overview') return;
-    if (!S.longLoaded) { $('#perfStats').innerHTML = '<span class="down">Couldn\'t load long-term history. Make sure the latest market.mjs is deployed.</span>'; return; }
+    if (!S.longLoaded) { $('#perfStats').innerHTML = '<span class="down">Couldn\'t load long-term history.</span>'; return; }
   }
   const asHeld = S.perfBasis === 'held';
-  if (asHeld && S.hist) {
+  if (asHeld && S.hist && !shared) {
     await loadFormerHoldings(start, long);
     if (S.perfRange !== r || S.view !== 'overview') return;
   }
-  const mkt = long ? S.long : S.market;
+  const mkt = shared ? RV.all : long ? S.long : S.market;
   const bt = asHeld
     ? (S.hist ? actualBacktest(S.hist, mkt, start) : windowAsHeld(calc, mkt, start))
     : windowBacktest(calc, mkt, rf(), start, long ? 52 : 252);
@@ -416,7 +425,7 @@ async function renderPerfChart() {
   let notes;
   if (bt.actual) {
     notes = [`Actual results, rebuilt from ${fmt.n(S.hist.transactions)} Schwab transactions: each day values exactly what the fund owned (including stocks since sold) plus cash and dividends. Money added or withdrawn is excluded, so this measures investment performance only.`];
-    if (bt.missing.length) notes.push(`No market prices for ${bt.missing.join(', ')} — valued at their last trade price.`);
+    if (bt.missing.length) notes.push(`${bt.missing.length} stock${bt.missing.length > 1 ? 's' : ''} no longer on Yahoo (${bt.missing.slice(0, 5).join(', ')}${bt.missing.length > 5 ? '…' : ''}) ${bt.missing.length > 1 ? 'are' : 'is'} estimated from our own trade prices. Every price history is checked against our Schwab trades (see Performance → Price data check).`);
   } else if (asHeld) {
     notes = ['Estimate: each stock counts only from the date we first bought it. Upload the Schwab transaction history on the Master Copy page for exact results.'];
   } else {
@@ -2360,7 +2369,7 @@ async function scrappyContext(q) {
   if (S.perfBt?.bt) { const b = S.perfBt.bt, w = perfWindowStats(b, 0, b.dates.length - 1); L.push(`Actual fund performance shown on the overview chart (${b.dates[0]} to ${b.dates[b.dates.length - 1]}, time-weighted, from Schwab transactions): SMIF ${fmt.spct(w.sm)} vs S&P 500 ${fmt.spct(w.sp)}${w.smA != null ? `, annualized ${fmt.spct(w.smA)} vs ${fmt.spct(w.spA)}` : ''}.`); }
   if (RV.loaded && RV.ss) {
     const yr = (w) => calendarYears(w).slice(-6).map((y) => `${y.year}${y.partial ? '*' : ''}: ${fmt.spct(y.fund)} vs ${fmt.spct(y.bench)}`).join('; ');
-    L.push(`Calendar-year returns (* = partial year), from the Performance tab — total fund vs SPY: ${yr(RV.total || [])}. Stocks vs SPY: ${yr(viewWeeks(RV.ss, 'eq'))}. Fixed income vs AGG (held since ${RV.ss.fiStart || 'n/a'}): ${yr(viewWeeks(RV.ss, 'fi')) || 'no history'}.`);
+    L.push(`Calendar-year returns (* = partial year), from the Performance tab — total fund vs SPY: ${yr(RV.total || [])}. Stocks vs SPY: ${yr(viewWeeks(RV.ss, 'eq'))}. Fixed income vs AGG (first bond ETFs bought ${RV.ss.fiStart || 'n/a'}): ${yr(viewWeeks(RV.ss, 'fi')) || 'no history'}.`);
   }
   L.push('\n# Holdings (ticker | name | GICS sector / industry | shares | price | value | % of fund | avg cost | gain since purchase | first bought | 1Y beta)');
   [...c.rows].sort((a, b) => b.value - a.value).forEach((r) => L.push(`${r.ticker} | ${r.name} | ${r.assetClass === 'Equity' ? `${r.sector} / ${fullIndustry(r.industry)}` : r.assetClass} | ${fmt.n(r.quantity, 2)} | ${fmt.usdC(r.price)} | ${fmt.usd(r.value)} | ${fmt.pct(r.weight, 2)} | ${fmt.usdC(r.avgCost)} | ${fmt.spct(r.ret)} | ${r.purchaseDate || '?'} | ${S.stats[r.ticker]?.beta != null ? fmt.x(S.stats[r.ticker].beta) : '?'}`));
@@ -2517,16 +2526,34 @@ async function loadAllHistory() {
       done = Math.min(need.length, (i + 4) * 6);
       if (S.view === 'returns') $('#rvTiles').innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty"><b>Loading ${need.length} price histories since 2009…</b>${done} of ${need.length} done. This happens once per visit.</div></div>`;
     }
+    await verifyAndRepair(syms);
     RV.loaded = true; RV.loading = null;
   })();
   return RV.loading;
+}
+function overviewTrailing() {
+  const out = [];
+  for (const label of ['1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', '10Y', 'Since start']) {
+    const start = label === 'Since start' ? S.hist.from : rangeStart(label);
+    if (label !== 'Since start' && start < S.hist.from) { out.push({ label, fund: null, bench: null }); continue; }
+    const daily = ['1M', '3M', '6M', 'YTD', '1Y'].includes(label) && S.market.SPY?.dates?.[0] <= start;
+    const bt = actualBacktest(S.hist, daily ? S.market : RV.all, start);
+    if (!bt) { out.push({ label, fund: null, bench: null }); continue; }
+    out.push({ label, from: bt.dates[0], fund: bt.smifRet, bench: bt.benchRet, diff: bt.smifRet - bt.benchRet, fundAnn: bt.smifAnn, benchAnn: bt.benchAnn, years: bt.years });
+  }
+  return out;
 }
 function currentClasses() { return Object.fromEntries(S.base.holdings.map((h) => [h.ticker, h.assetClass])); }
 function rvData() {
   if (!RV.ss) RV.ss = sleeveSeries(S.hist, RV.all, currentClasses());
   if (!RV.total) {
     const bt = actualBacktest(S.hist, RV.all, S.hist.from);
-    RV.total = bt ? bt.dates.slice(1).map((d, i) => ({ d0: bt.dates[i], d1: d, r: bt.smif[i + 1] / bt.smif[i] - 1, b: bt.bench[i + 1] / bt.bench[i] - 1, cov: 1 })) : [];
+    const byD = new Map(RV.ss.weeks.map((w) => [w.d0, w]));
+    RV.total = bt ? bt.dates.slice(1).map((d, i) => {
+      const w = byD.get(bt.dates[i]), ve = w?.eq?.v || 0, vf = w?.fi?.v || 0, vc = w?.cash?.v || 0, tot = ve + vf + vc;
+      return { d0: bt.dates[i], d1: d, r: bt.smif[i + 1] / bt.smif[i] - 1, b: bt.bench[i + 1] / bt.bench[i] - 1, cov: 1,
+        est: tot ? ((w?.eq?.est || 0) * ve + (w?.fi?.est || 0) * vf) / tot : 0, estT: [...(w?.eq?.estT || []), ...(w?.fi?.estT || [])] };
+    }) : [];
     RV.totalMissing = bt?.missing || [];
   }
   const ss = RV.ss;
@@ -2535,7 +2562,15 @@ function rvData() {
   else if (RV.mode === 'fi') { weeks = viewWeeks(ss, 'fi'); label = 'Fixed income'; bench = 'Bloomberg US Agg (AGG)'; color = C.blue; }
   else if (RV.mode === 'cash') { weeks = viewWeeks(ss, 'cash'); label = 'Money market & cash'; bench = '1–3 month T-bills (BIL)'; color = C.violet; }
   else { weeks = RV.total; label = 'SMIF (actual mix)'; bench = 'S&P 500 (SPY)'; color = C.gold; }
-  return { weeks, label, bench, color, years: calendarYears(weeks), trailing: trailingPeriods(weeks) };
+  // "Actual mix" trailing periods are worked out exactly like the Overview chart (same function, same
+  // start dates, same prices: daily for 1 year and shorter, the checked weekly store beyond), so the two always match.
+  const trailing = RV.mode === 'total' ? overviewTrailing() : trailingPeriods(weeks);
+  const years = calendarYears(weeks);
+  // this year's bar = the Overview chart's YTD number exactly
+  const ytd = RV.mode === 'total' && trailing.find((x) => x.label === 'YTD' && x.fund != null);
+  const cy = years.find((y) => y.year === new Date().getFullYear());
+  if (ytd && cy) Object.assign(cy, { fund: ytd.fund, bench: ytd.bench, diff: ytd.fund - ytd.bench });
+  return { weeks, label, bench, color, years, trailing };
 }
 async function renderReturns() {
   $('#rvSplit').innerHTML = acSplitHTML();
@@ -2552,6 +2587,8 @@ async function renderReturns() {
     if (S.view !== 'returns') return;
     if (!RV.all.SPY) { emptyChart('chYears', 'Couldn\'t load long price history from Yahoo. Try Refresh in a minute.'); return; }
   }
+  if (S.hist && S.market.SPY) await loadFormerHoldings(rangeStart('1Y') < `${new Date().getFullYear() - 1}-12-31` ? rangeStart('1Y') : `${new Date().getFullYear() - 1}-12-31`, false);
+  if (S.view !== 'returns') return;
   drawReturns();
 }
 function syncRvControls() {
@@ -2579,7 +2616,7 @@ function drawReturns() {
   const t = calc.total;
   if (RV.mode === 'total') notes.push(`Everything the fund owns, at the weights we actually held: today ${fmt.pct(calc.eqValue / t, 0)} equities, ${fmt.pct(calc.fiValue / t, 0)} fixed income, ${fmt.pct(calc.cashLike / t, 0)} money market &amp; cash. Compared with the S&amp;P 500, the fund's benchmark.`);
   if (RV.mode === 'eq') notes.push('Only the stocks we held. Bonds, money market and cash are left out.');
-  if (RV.mode === 'fi') notes.push(RV.ss.fiStart ? `Only our bond ETFs. SMIF has held them since <b>${fdate(RV.ss.fiStart)}</b>, so this history starts there.` : 'The fund has no bond history yet.');
+  if (RV.mode === 'fi') notes.push(RV.ss.fiStart ? `Only our bond ETFs. SMIF first bought them on <b>${fdate(RV.ss.fiStart)}</b>; returns start with the first full week after that.` : 'The fund has no bond history yet.');
   if (RV.mode === 'cash') notes.push('Uninvested cash plus the Treasury money-market fund. Its return is the interest and money-market dividends we received.');
   $('#rvBench').innerHTML = `<span><i class="ac-dot" style="background:${D.color}"></i><b>${esc(D.label)}</b> vs <i class="ac-dot" style="background:${C.grayLight}"></i><b>${esc(D.bench)}</b></span>${notes.map((n) => `<span class="rv-note">${n}</span>`).join('')}`;
   // tiles
@@ -2599,10 +2636,10 @@ function drawReturns() {
   // chart
   const modeName = { total: 'total portfolio', eq: 'equities', fi: 'fixed income', cash: 'money market & cash' }[RV.mode];
   $('#rvTitle').textContent = `${isYears ? 'Calendar years' : 'Trailing periods'} — ${modeName}`;
-  $('#rvHint').textContent = isYears ? (years.some((y) => y.partial) ? 'faded bars are partial years' : '') : 'over 1 year = annualized';
+  $('#rvHint').textContent = isYears ? (years.some((y) => y.partial) ? 'faded bars are partial years' : '') : 'total return over each period · same numbers as the Overview chart';
   const cats = isYears ? years.map((y) => String(y.year)) : trail.filter((t) => t.fund != null).map((t) => t.label);
   const rows = isYears ? years : trail.filter((t) => t.fund != null);
-  const val = (r, k) => (isYears ? r[k] : r.years >= 1 ? r[k + 'Ann'] ?? r[k] : r[k]);
+  const val = (r, k) => r[k]; // totals for every period, the same numbers the Overview chart shows
   const fade = (hex, a) => { const m = hex.match(/\w\w/g); return m && hex.startsWith('#') ? `rgba(${m.map((x) => parseInt(x, 16)).join(',')},${a})` : hex; };
   const bar = (k, col) => rows.map((r) => {
     const v = val(r, k);
@@ -2620,11 +2657,11 @@ function drawReturns() {
     tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: C.wash } }, formatter: (p) => {
       const r = rows[p[0].dataIndex];
       const f = val(r, 'fund'), bb = val(r, 'bench');
-      let h = `<b>${isYears ? r.year : r.label}</b>${isYears && r.partial ? ` <span style="color:${C.muted}">(${fdate(r.from)} – ${fdate(r.to)})</span>` : !isYears && r.years >= 1 ? ` <span style="color:${C.muted}">per year</span>` : ''}<br>`;
+      let h = `<b>${isYears ? r.year : r.label}</b>${isYears && r.partial ? ` <span style="color:${C.muted}">(${fdate(r.from)} – ${fdate(r.to)})</span>` : !isYears ? ` <span style="color:${C.muted}">since ${fdate(r.from)}</span>` : ''}<br>`;
       h += `<span style="color:${D.color}">●</span> ${esc(D.label)}: <b>${fmt.spct(f)}</b><br><span style="color:${C.grayLight}">●</span> ${esc(D.bench)}: <b>${fmt.spct(bb)}</b><br>`;
       h += f - bb >= 0 ? `<span style="color:${C.up}">Ahead of the benchmark by ${fmt.pct(f - bb, 1)}</span>` : `<span style="color:${C.down}">Behind the benchmark by ${fmt.pct(bb - f, 1)}</span>`;
       if (isYears && r.proxyShare > 0) h += `<br><span style="color:${C.muted}">◇ bond part uses AGG for ${Math.round(r.proxyShare * 100)}% of the year</span>`;
-      if (isYears && r.coverage < 0.97) h += `<br><span style="color:${C.muted}">Price data covers ${fmt.pct(r.coverage, 0)} of these holdings</span>`;
+      if (isYears && r.estShare > 0.005) h += `<br><span style="color:${C.muted}">${fmt.pct(r.estShare, 0)} of holdings estimated from our trade prices (no longer on Yahoo): ${esc(r.estTickers.slice(0, 6).join(', '))}${r.estTickers.length > 6 ? '…' : ''}</span>`;
       return h;
     } },
     xAxis: { type: 'category', data: cats, ...axisCommon, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, color: C.ink2, fontSize: isMobile() ? 10 : 12, interval: 0, rotate: isMobile() && cats.length > 9 ? 45 : 0 } },
@@ -2635,13 +2672,14 @@ function drawReturns() {
   const head = isYears ? ['Year', D.label, D.bench, 'Difference', 'Notes'] : ['Period', D.label, D.bench, 'Difference', 'Notes'];
   const body = rows.map((r) => {
     const f = val(r, 'fund'), bb = val(r, 'bench'), d = f - bb;
-    const n = isYears ? [r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '', r.proxyShare > 0 ? `◇ AGG stand-in for bonds ${Math.round(r.proxyShare * 100)}% of the year` : '', r.coverage < 0.97 ? `prices for ${fmt.pct(r.coverage, 0)} of holdings` : ''].filter(Boolean).join(' · ')
-      : `${r.years >= 1 ? 'Per year, ' : ''}since ${fdate(r.from)}`;
+    const n = isYears ? [r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '', r.estShare > 0.005 ? `<span class="est-note" title="These stocks have since been delisted, merged or bought out, so Yahoo has no prices for them. Their path is estimated from the prices we actually bought and sold at.">≈ ${fmt.pct(r.estShare, 0)} estimated: ${esc(r.estTickers.slice(0, 4).join(', '))}${r.estTickers.length > 4 ? ` +${r.estTickers.length - 4}` : ''}</span>` : ''].filter(Boolean).join(' · ')
+      : `since ${fdate(r.from)}${r.years >= 1 && r.fundAnn != null ? ` · per year ${fmt.spct(r.fundAnn)} vs ${fmt.spct(r.benchAnn)}` : ''}`;
     return `<tr><td><b>${isYears ? r.year : r.label}</b></td><td class="n ${cls(f)}">${fmt.spct(f)}</td><td class="n ${cls(bb)}">${fmt.spct(bb)}</td><td class="n ${cls(d)}">${fmt.spct(d)}</td><td style="color:var(--muted);font-size:12px">${n}</td></tr>`;
   }).join('');
   $('#tblYears').innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i && i < 4 ? 'n' : ''}" style="cursor:default">${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>`;
-  $('#rvTableHint').textContent = RV.mode === 'total' && RV.totalMissing.length ? `${RV.totalMissing.length} old tickers have no Yahoo prices; they're held at their last trade price` : 'Time-weighted, dividends and interest included';
+  $('#rvTableHint').innerHTML = rows.some((r) => r.estShare > 0.005) ? '≈ = part of that year uses stocks that have since been delisted or bought out. Yahoo has no prices for them, so their path is estimated from our own buy and sell prices.' : 'Time-weighted, dividends and interest included';
   RV.last = { D, rows, isYears, val };
+  if ($('#rvQuality')) $('#rvQuality').innerHTML = qualityHTML();
 }
 function acSplitHTML() {
   if (!calc) return '';
@@ -2682,4 +2720,54 @@ function fillAcStrips() {
   if (!calc) return;
   const h = acStripHTML();
   $$('.ac-strip-slot').forEach((el) => { if (el.closest('.view.active')) el.innerHTML = h; });
+}
+
+// Every price history is checked against the fund's own Schwab trade prices. A history that doesn't match
+// (wrong company reusing an old ticker, bad data) or is missing gets a second source (Tiingo, via /api/prices);
+// if that also fails, the stock's path is estimated from our trade prices.
+async function verifyAndRepair(syms) {
+  const Q = (RV.quality = {});
+  const bad = [];
+  for (const t of syms) {
+    const h = S.hist.tickers[t]; if (!h) continue;
+    const v = verifyPrices(h, RV.all[t]);
+    Q[t] = { source: RV.all[t] ? 'Yahoo Finance' : null, ...v };
+    if (!v.ok) { bad.push(t); if (RV.all[t]) { Q[t].rejected = 'Yahoo Finance'; delete RV.all[t]; } }
+  }
+  RV.secondSource = null;
+  for (let i = 0; i < bad.length; i += 10) {
+    try {
+      const r = await getJSON(`/api/prices?symbols=${encodeURIComponent(bad.slice(i, i + 10).join(','))}`, {}, 30000);
+      RV.secondSource = r.secondSource;
+      r.data.forEach((d) => {
+        const t = d.symbol?.toUpperCase(); if (!t || !Q[t]) return;
+        if (d.error || !d.dates?.length) { Q[t].tried = d.error; return; }
+        const v = verifyPrices(S.hist.tickers[t], d);
+        if (v.ok) { RV.all[t] = d; Q[t] = { ...Q[t], ...v, source: d.source || 'Second source', ok: true }; }
+        else Q[t].tried = `${d.source || 'Second source'} didn't match our trade prices either (median gap ${fmt.pct(v.medianErr, 0)})`;
+      });
+    } catch (e) { bad.slice(i, i + 10).forEach((t) => { if (Q[t]) Q[t].tried = String(e.message || e); }); }
+  }
+  bad.forEach((t) => { if (!RV.all[t]) Q[t].source = 'Estimated from our trade prices'; });
+}
+function qualityHTML() {
+  const Q = RV.quality || {};
+  const rows = Object.entries(Q).map(([t, q]) => ({ t, ...q, name: S.hist.tickers[t]?.name || t }));
+  if (!rows.length) return '';
+  const by = (src) => rows.filter((r) => r.source === src).length;
+  const est = rows.filter((r) => /Estimated/.test(r.source));
+  const second = rows.filter((r) => r.source && !/Yahoo|Estimated/.test(r.source));
+  const rejected = rows.filter((r) => r.rejected);
+  const verified = rows.filter((r) => r.ok && r.checked);
+  const line = (r) => `<tr><td><span class="tk">${esc(r.t)}</span><span class="nm">${esc(r.name)}</span></td><td>${esc(r.source || '—')}</td><td class="n">${r.checked ? fmt.n(r.checked) : '—'}</td><td class="n">${r.medianErr != null ? fmt.pct(r.medianErr, 1) : '—'}</td><td style="font-size:12px;color:var(--muted)">${esc([r.rejected ? `${r.rejected} didn't match our trade prices` : '', r.missing && !r.rejected ? 'Not on Yahoo Finance' : '', r.tried || ''].filter(Boolean).join(' · '))}</td></tr>`;
+  const flagged = rows.filter((r) => r.rejected || r.missing || !/Yahoo/.test(r.source || ''));
+  return `<div class="dq-sum">
+      <div><b class="up">${verified.length}</b><span>price histories match our Schwab trade prices</span></div>
+      <div><b>${by('Yahoo Finance')}</b><span>from Yahoo Finance</span></div>
+      <div><b>${second.length}</b><span>from the second source (Tiingo)</span></div>
+      <div><b class="${est.length ? 'warn-t' : ''}">${est.length}</b><span>estimated from our trade prices</span></div>
+    </div>
+    <p class="dq-p">Every stock's price history is checked against the prices SMIF actually paid and received in Schwab (median gap allowed: 10%). ${rejected.length ? `${rejected.length} Yahoo histor${rejected.length > 1 ? 'ies were' : 'y was'} rejected because they didn't match — usually an old ticker that now belongs to a different company. ` : ''}${RV.secondSource === false && est.length ? 'A second source isn\'t set up yet, so missing stocks are estimated. Adding a free Tiingo key (see README) fills most of them with real prices.' : ''}</p>
+    ${flagged.length ? `<details class="fold"><summary><span>Stocks that needed a second source or an estimate (${flagged.length})</span><small>source · trades checked · median gap</small></summary><div class="table-wrap"><table><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Price source</th><th class="n" style="cursor:default">Trades checked</th><th class="n" style="cursor:default">Median gap</th><th style="cursor:default">Why</th></tr></thead><tbody>${flagged.map(line).join('')}</tbody></table></div></details>` : ''}
+    <details class="fold"><summary><span>All ${rows.length} holdings</span><small>where each price history comes from</small></summary><div class="table-wrap"><table><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Price source</th><th class="n" style="cursor:default">Trades checked</th><th class="n" style="cursor:default">Median gap</th><th style="cursor:default">Notes</th></tr></thead><tbody>${rows.sort((a, b) => a.t.localeCompare(b.t)).map(line).join('')}</tbody></table></div></details>`;
 }

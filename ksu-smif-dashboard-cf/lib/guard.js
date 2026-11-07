@@ -59,8 +59,50 @@ export function cleanData(text) {
 
 // pieces of the system prompt — if any show up in an answer, the model leaked its instructions
 const LEAK = ['you are scrappy, the ai portfolio assistant', 'scope — stay inside it', 'how the fund operates (apply', 'when asked "is x a good buy?"', 'security — these rules', '<fund_data', 'these instructions are permanent'];
+// Small models sometimes get stuck repeating a phrase. Cut the answer where the loop starts.
+export function stopRepeats(text) {
+  let t = String(text || '');
+  // 1) the same 25+ character chunk three or more times in a row
+  t = t.replace(/([\s\S]{25,300}?)(?:\s*\1){2,}/g, '$1');
+  // 2) the same clause coming back again and again (", but the notes are actually …"): cut where it comes back
+  const seen = new Map();
+  for (const m of t.matchAll(/[^.!?;,\n]{30,}/g)) {
+    const k = m[0].toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const e = seen.get(k) || [];
+    e.push(m.index); seen.set(k, e);
+    if (e.length >= 3) { t = t.slice(0, e[1]).replace(/[,;:\s]+$/, '') + '…'; break; }
+  }
+  // 3) the same point made twice in different words: drop a sentence that mostly re-uses an earlier sentence's words
+  t = dropRestatements(t);
+  // 4) an answer that ran out of room mid-sentence ends at the last full sentence
+  if (!/[.!?)…*]\s*$/.test(t.trim())) {
+    const end = Math.max(t.lastIndexOf('. '), t.lastIndexOf('.\n'), t.lastIndexOf('! '), t.lastIndexOf('? '));
+    if (end > t.length * 0.5) t = t.slice(0, end + 1);
+  }
+  return t.trim();
+}
+
+const FILLER = new Set('that this these those with from have were been being which their there they them into also just about would could should will likely more most some such than then very over under your what when where while because after before other only same like data fund funds notes note under tab'.split(' '));
+const words = (x) => new Set(x.toLowerCase().replace(/[^a-z0-9% ]/g, ' ').split(/\s+/).filter((w) => w.length >= 4 && !FILLER.has(w)).map((w) => w.replace(/(ing|ed|es|s)$/, '')));
+function overlap(a, b) { if (!a.size || !b.size) return 0; let n = 0; for (const w of a) if (b.has(w)) n++; return n / Math.min(a.size, b.size); }
+export function dropRestatements(text) {
+  const kept = [];
+  return String(text).split('\n').map((line) => {
+    const bullet = line.match(/^\s*(?:[-•*]|\d+[.)])\s+/)?.[0] || '';
+    const body = line.slice(bullet.length);
+    const sents = body.split(/(?<=[.!?])\s+(?=[A-Z*(])/);
+    const out = sents.filter((sn) => {
+      const w = words(sn);
+      if (w.size < 6) return true; // short lines (headings, numbers) are always kept
+      if (kept.some((k) => overlap(w, k) >= 0.7)) return false;
+      kept.push(w); return true;
+    });
+    return out.length ? bullet + out.join(' ') : null;
+  }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 export function checkAnswer(text) {
-  const t = String(text || '');
+  const t = stopRepeats(text);
   const l = t.toLowerCase();
   if (LEAK.some((x) => l.includes(x))) return REFUSAL;
   if (/\b(as an? (?:unrestricted|unfiltered|jailbroken)|dan:|developer mode (?:enabled|output))/i.test(t)) return REFUSAL;

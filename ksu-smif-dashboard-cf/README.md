@@ -72,3 +72,9 @@ Things that work differently on Cloudflare:
 - Guardrails (`lib/guard.js`): jailbreak / prompt-injection attempts ("ignore your instructions", "what's your system prompt", role-play, "developer mode", fake system messages, encoded text) and clearly unrelated requests are refused before reaching the AI, so they don't use the allowance. Earlier attempts are dropped from the chat history, role markers are stripped from the fund data, and answers that leak the instructions are replaced with a refusal. To adjust, edit the patterns in `lib/guard.js`.
 - Optional, paid: to use OpenAI instead, add a **Secret** `OPENAI_API_KEY` and a **Variable** `OPENAI_MODEL` (a current model name from OpenAI's pricing page) under Settings → Variables and Secrets.
 - To change how Scrappy behaves (scope, tone, the fund's rules), edit the `SYSTEM` text at the top of `functions/api/scrappy.js`.
+
+## Price accuracy (Performance tab)
+- Every stock's weekly price history is checked against the prices SMIF actually paid and received in the Schwab transaction history (median gap allowed: 10%). This catches missing data and old tickers that now belong to a different company.
+- Order of sources: **Yahoo Finance** → **Tiingo** (second source, used only for stocks Yahoo is missing or gets wrong) → **estimated** from our own trade prices.
+- To turn on Tiingo (free): sign up at tiingo.com, copy your API token (Profile → API → Token), then in Cloudflare open the `smif` app → Settings → Variables and Secrets → Add → Type **Secret**, Name `TIINGO_KEY`, paste the token → Deploy. Free plan: 500 different tickers a month, 50 requests an hour, 1,000 a day. Each ticker is fetched once and saved in KV forever, so this stays far under the limits.
+- The "Price data check" card on the Performance tab lists where every price history came from.

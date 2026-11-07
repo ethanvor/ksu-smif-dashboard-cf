@@ -636,3 +636,8 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 .tr-table tr.tr-group td { background: rgba(var(--fg), 0.03); padding: 8px 12px !important; font-size: 12px; }
 .tr-table tr.tr-group td span:last-child { color: var(--muted); margin-left: 8px; }
 @media (max-width: 600px) { .tr-table tr.tr-group { display: block; padding: 0; } .tr-table tr.tr-group td { display: block; } }
+.dq-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.dq-sum > div { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; background: rgba(var(--fg), .02); }
+.dq-sum b { font-size: 22px; } .dq-sum span { font-size: 12px; color: var(--muted); } .warn-t { color: var(--warn); }
+.dq-p { font-size: 13px; color: var(--ink-2); line-height: 1.55; margin: 12px 0; }
+@media (max-width: 720px) { .dq-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

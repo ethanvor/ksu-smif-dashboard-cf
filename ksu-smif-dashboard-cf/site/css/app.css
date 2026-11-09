@@ -679,3 +679,13 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 .up-guide ol{margin:6px 0 12px;padding-left:18px}
 .up-guide .ug-foot{margin-top:12px;font-size:12px;color:var(--muted);line-height:1.5}
 .ips-sum.warn { color: var(--gold-text); background: rgba(255,198,41,.14); }
+
+/* trade impact */
+.calc .calc-sec { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
+.calc .calc-sec b { text-align: right; }
+.warn-t { color: var(--gold-text); }
+.imp-table td, .imp-table th { white-space: nowrap; }
+.imp-table tr.imp-dim td { color: var(--muted); }
+.imp-table tr.imp-hit td:first-child { font-weight: 700; color: var(--ink); }
+.imp-pop .impact-row { padding: 7px 0; }
+.tr-sum .sub { font-size: 11px; color: var(--muted); margin-top: 3px; }

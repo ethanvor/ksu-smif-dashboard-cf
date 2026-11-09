@@ -1,6 +1,6 @@
 // KSU SMIF Dashboard — app shell, data loading, views.
 import { gicsFor, fullIndustry } from './gics.js';
-import { IPS, stockChecks, weeklyAdjBeta, sizeLimits } from './ips.js';
+import { IPS, stockChecks, weeklyAdjBeta, regBeta, sizeLimits } from './ips.js';
 import {
   computePortfolio, symbolStats, portfolioStats, windowBacktest, windowAsHeld, actualBacktest, applyTrades, periodReturns, weightedBeta,
   fmt, cls, toGics, SECTORS, CASH_LIKE, sleeveSeries, viewWeeks, calendarYears, trailingPeriods, assetClassOf, verifyPrices,
@@ -674,14 +674,17 @@ function renderAllocation() {
   renderSectorBars('chSector', S.secBasis);
   const d = sectorData('equity').map((x) => ({ ...x, diff: x.smif - x.spx })).sort((a, b) => a.diff - b.diff);
   const band = S.settings.band / 100;
+  const lim = Math.max(band, ...d.map((x) => Math.abs(x.diff))) + 0.012; // room for the value labels
   setChart('chActive', {
-    grid: { left: 150, right: 60, top: 10, bottom: 20 },
+    grid: { left: 8, right: 16, top: 30, bottom: 8, containLabel: true },
     tooltip: { ...tooltipBase, trigger: 'item', formatter: (p) => { const r = d[p.dataIndex]; return `<b>${r.s}</b><br>${r.diff >= 0 ? 'Overweight' : 'Underweight'} by ${Math.abs(r.diff * 100).toFixed(1)} pts<br>SMIF ${fmt.pct(r.smif)} vs S&P ${fmt.pct(r.spx)}`; } },
-    xAxis: { type: 'value', ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (v * 100).toFixed(0) + ' pts' } },
-    yAxis: { type: 'category', data: d.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLabel: { color: C.ink2 } },
-    series: [{ type: 'bar', barWidth: '55%', data: d.map((x) => ({ value: x.diff, itemStyle: { color: x.diff >= 0 ? C.gold : C.blue, borderRadius: x.diff >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4], opacity: Math.abs(x.diff) > band ? 1 : 0.65 } })),
-      label: { show: true, position: 'right', color: C.ink2, formatter: (p) => fmt.pts(p.value) },
-      markLine: { silent: true, symbol: 'none', lineStyle: { color: C.muted, type: 'dashed' }, label: { color: C.muted, formatter: `±${S.settings.band} pts (IPS rebalance)` }, data: [{ xAxis: band }, { xAxis: -band }] } }],
+    xAxis: { type: 'value', min: -lim, max: lim, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, hideOverlap: true, formatter: (v) => (Math.abs(v * 100 - Math.round(v * 100)) < 1e-6 ? (v > 0 ? '+' : '') + Math.round(v * 100) + ' pts' : '') } },
+    yAxis: { type: 'category', data: d.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.ink2, fontSize: isMobile() ? 10 : 12 } },
+    series: [{ type: 'bar', barWidth: '55%', data: d.map((x) => ({ value: x.diff, label: { position: x.diff >= 0 ? 'right' : 'left' }, itemStyle: { color: x.diff >= 0 ? C.gold : C.blue, borderRadius: x.diff >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4], opacity: Math.abs(x.diff) > band ? 1 : 0.65 } })),
+      label: { show: true, color: C.ink2, fontSize: 11, formatter: (p) => fmt.pts(p.value) },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: C.muted, type: 'dashed', opacity: 0.7 },
+        label: { color: C.muted, fontSize: 10, position: 'end', distance: 4, formatter: (p) => (p.value > 0 ? '+' : '−') + S.settings.band + ' pts rebalance' },
+        data: [{ xAxis: band }, { xAxis: -band }, { xAxis: 0, lineStyle: { type: 'solid', color: C.muted, opacity: 0.45 }, label: { show: false } }] } }],
   });
 
   // weights table grouped by sector
@@ -1109,6 +1112,29 @@ function onSearchInput() {
   }, 300);
 }
 
+// Market cap at the last price. If Yahoo's figure is missing (or the profile is an older saved copy),
+// rebuild it from shares outstanding × the latest price.
+function withMarketCap(prof, price) {
+  if (!prof) return prof;
+  const p = { ...prof };
+  if (p.sharesOutstanding && price && (p.marketCap == null || p.stale)) { p.marketCap = p.sharesOutstanding * price; p.capNote = 'shares × last price'; }
+  else if (p.marketCap != null) p.capNote = p.capSource && p.capSource !== 'Yahoo' ? p.capSource : '';
+  return p;
+}
+async function retryProfile(sym) {
+  for (const wait of [1500, 4000]) {
+    await new Promise((r) => setTimeout(r, wait));
+    if (S.stock?.symbol !== sym) return;
+    try {
+      const p = await getJSON(`/api/profile?symbol=${encodeURIComponent(sym)}`, {}, 8000);
+      if (S.stock?.symbol !== sym || !p) return;
+      S.stock.prof = withMarketCap(p, S.stock.price);
+      const box = $('#valFold'); if (box) box.outerHTML = valuationHTML(S.stock);
+      refreshIps(); return;
+    } catch { /* try again */ }
+  }
+  if (S.stock?.symbol === sym) { S.stock.profFailed = true; refreshIps(); }
+}
 async function analyze(sym) {
   sym = String(sym || '').trim().toUpperCase().replace(/[^A-Z0-9.\-^=]/g, '');
   if (!sym) return;
@@ -1121,12 +1147,14 @@ async function analyze(sym) {
   if (S.api) {
     const [mr, pr] = await Promise.allSettled([
       m ? Promise.resolve(null) : getJSON(`/api/market?symbols=${encodeURIComponent(sym + (S.market.SPY ? '' : ',SPY'))}&range=1y`, {}, 20000),
-      getJSON(`/api/profile?symbol=${encodeURIComponent(sym)}`, {}, 15000),
+      getJSON(`/api/profile?symbol=${encodeURIComponent(sym)}`, {}, 4500),
     ]);
     if (mr.status === 'fulfilled' && mr.value) mr.value.data.forEach((d) => { if (d && !d.error && d.closes?.length) S.market[d.symbol.toUpperCase()] = d; else if (d?.symbol?.toUpperCase() === sym) err = d.error; });
     if (mr.status === 'rejected') err = mr.reason?.message;
     if (pr.status === 'fulfilled') prof = pr.value;
+    else retryProfile(sym); // keep trying quietly; the card fills in when it arrives
     m = S.market[sym];
+    prof = withMarketCap(prof, m?.price ?? held?.price);
     if (m && S.market.SPY) S.stats[sym] = symbolStats(m, S.market.SPY, rf());
   }
   const st = S.stats[sym];
@@ -1155,6 +1183,26 @@ async function analyze(sym) {
 function metric(k, v, s, t) {
   return `<div class="metric"><div class="k">${k}${t ? tip(t) : ''}</div><div class="v num">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
 }
+function valuationHTML(s) {
+  const p = s.prof || {};
+  const upside = p.targetMeanPrice && s.price ? p.targetMeanPrice / s.price - 1 : null;
+  return `<details class="fold mt" data-fold="val" id="valFold"><summary><span>Valuation &amp; fundamentals</span><small>${[p.trailingPE != null ? `P/E ${fmt.x(p.trailingPE, 1)}` : '', p.dividendYield != null ? `Yield ${fmt.pct(p.dividendYield, 2)}` : '', upside != null ? `Target ${fmt.spct(upside)}` : ''].filter(Boolean).join(' · ') || 'Tap to view'}</small></summary>
+  <div class="metrics">
+    ${metric('Market cap', fmt.big(p.marketCap), p.capNote ? esc(p.capNote) : '', 'Total value of all shares outstanding, at the latest price. If Yahoo is slow, it is rebuilt from shares outstanding × the last price.')}
+    ${metric('P/E (trailing)', fmt.x(p.trailingPE, 1), '', 'Price ÷ last 12 months of earnings per share. How many dollars you pay for $1 of profit.')}
+    ${metric('P/E (forward)', fmt.x(p.forwardPE, 1), '', 'Price ÷ next year\'s expected earnings.')}
+    ${metric('PEG', fmt.x(p.pegRatio), '', 'P/E divided by expected growth. Around 1 = fairly priced for its growth.')}
+    ${metric('EV / EBITDA', fmt.x(p.evToEbitda, 1), '', 'Enterprise value ÷ operating cash earnings. Compares companies regardless of debt.')}
+    ${metric('Price / book', fmt.x(p.priceToBook), '', 'Price ÷ book value per share.')}
+    ${metric('Dividend yield', fmt.pct(p.dividendYield, 2), p.payoutRatio != null ? `Payout ${fmt.pct(p.payoutRatio, 0)}` : '', 'Annual dividends ÷ price.')}
+    ${metric('ROE', fmt.pct(p.roe), '', 'Return on equity: profit ÷ shareholders\' equity.')}
+    ${metric('Profit margin', fmt.pct(p.profitMargin), p.operatingMargin != null ? `Operating ${fmt.pct(p.operatingMargin)}` : '', 'Net income ÷ revenue.')}
+    ${metric('Revenue growth', `<span class="${cls(p.revenueGrowth)}">${fmt.spct(p.revenueGrowth)}</span>`, 'Year over year', 'Most recent quarter vs the same quarter a year ago.')}
+    ${metric('Debt / equity', p.debtToEquity != null ? fmt.x(p.debtToEquity / 100) + 'x' : '—', '', 'Total debt ÷ shareholders\' equity.')}
+    ${metric('Analyst target', fmt.usdC(p.targetMeanPrice), upside != null ? `<span class="${cls(upside)}">${fmt.spct(upside)} upside</span> · ${p.analystCount || 0} analysts` : '', 'Average 12-month price target from Wall Street analysts.')}
+  </div>
+</details>`
+}
 function renderStockCard(err) {
   const s = S.stock, m = s.m, p = s.prof || {}, st = s.st;
   const day = m ? (m.dayPrevClose ? m.price / m.dayPrevClose - 1 : null) : s.held?.prevClose ? s.held.price / s.held.prevClose - 1 : null;
@@ -1179,17 +1227,17 @@ function renderStockCard(err) {
     </div><div class="row" id="stkStats" style="gap:18px;font-size:13px;color:var(--ink-2);margin:6px 0 0"></div>`;
   h += `<div id="chStock" class="chart short mt"></div>`;
   if (st) {
-    h += `<div class="range52-wrap" style="margin:14px 0 4px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span>52-wk low ${fmt.usdC(st.low52)}</span><span>52-week range ${tip(GLOSS.r52)}</span><span>high ${fmt.usdC(st.high52)}</span></div><div class="range52"><i style="left:${(pos52 ?? 0) * 100}%"></i></div></div>`;
+    h += `<div class="range52-wrap" style="margin:14px 0 4px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span>52-wk low ${fmt.usdC(st.low52)}</span><span>52-week range (intraday) ${tip(GLOSS.r52)}</span><span>high ${fmt.usdC(st.high52)}</span></div><div class="range52"><i style="left:${(pos52 ?? 0) * 100}%"></i></div></div>`;
   }
   if (s.assetClass === 'Equity') h += `<div class="ips-box" id="ipsBox">${ipsHTML()}</div>`;
   else h += `<div class="ips-box"><div class="ips-head"><b>Investment Policy check</b><span class="ips-sum info">The IPS stock criteria apply to equities</span></div></div>`;
-  h += `<h3 class="mt">Risk &amp; return (1 year, vs S&amp;P 500)</h3><div class="metrics">
-    ${metric('Beta', fmt.x(st?.beta), p.beta != null ? `Yahoo (5y monthly): ${fmt.x(p.beta)}` : 'Daily, 1 year', GLOSS.beta)}
+  h += `<h3 class="mt">Risk &amp; return (vs S&amp;P 500 · beta 5 years, others 1 year)</h3><div class="metrics">
+    <div id="betaTile" style="display:contents">${betaTileHTML(s)}</div>
     ${metric('Volatility', fmt.pct(st?.vol), st ? `S&P: ${fmt.pct(S.stats.SPY?.vol)}` : '', GLOSS.vol)}
     ${metric('Sharpe ratio', st ? `<span class="${cls(st.sharpe)}">${fmt.x(st.sharpe)}</span>` : '—', st ? `S&P: ${fmt.x(S.stats.SPY?.sharpe)} · rf ${fmt.pct(rf(), 2)}` : '', GLOSS.sharpe)}
     ${metric('Sortino ratio', fmt.x(st?.sortino), '', GLOSS.sortino)}
     ${metric('Max drawdown', st ? `<span class="down">${fmt.pct(st.maxDD)}</span>` : '—', '', GLOSS.maxDD)}
-    ${metric('Alpha', st ? `<span class="${cls(st.alpha)}">${fmt.spct(st.alpha)}</span>` : '—', '', GLOSS.alpha)}
+    ${metric('Alpha', st ? `<span class="${cls(st.alpha)}">${fmt.spct(st.alpha)}</span>` : '—', st ? `1-yr, uses 1-yr daily beta ${fmt.x(st.beta)}` : '', GLOSS.alpha)}
     ${metric('Correlation', fmt.x(st?.corr), 'to S&P 500', GLOSS.corr)}
     ${metric('1Y return', st ? `<span class="${cls(st.periods['1Y'])}">${fmt.spct(st.periods['1Y'])}</span>` : '—', st ? `YTD ${fmt.spct(st.periods.YTD)} · 3M ${fmt.spct(st.periods['3M'])}` : '')}
   </div>
@@ -1200,22 +1248,7 @@ function renderStockCard(err) {
       : metric('Cash + money market', fmt.pct(calc.cashLike / calc.total), `${fmt.usd(calc.cashLike)} available to deploy`, 'Cash-like holdings. Trade Lab buys are paid from cash only.')}
     ${metric('Correlation to portfolio', S.pstats && st ? fmt.x(corrToPortfolio(s.symbol)) : '—', 'Lower = better diversifier', 'How closely this stock has moved with the SMIF portfolio over the past year.')}
   </div>
-  <details class="fold mt" data-fold="val"><summary><span>Valuation &amp; fundamentals</span><small>${[p.trailingPE != null ? `P/E ${fmt.x(p.trailingPE, 1)}` : '', p.dividendYield != null ? `Yield ${fmt.pct(p.dividendYield, 2)}` : '', upside != null ? `Target ${fmt.spct(upside)}` : ''].filter(Boolean).join(' · ') || 'Tap to view'}</small></summary>
-  <div class="metrics">
-    ${metric('Market cap', fmt.big(p.marketCap), '', 'Total value of all shares outstanding.')}
-    ${metric('P/E (trailing)', fmt.x(p.trailingPE, 1), '', 'Price ÷ last 12 months of earnings per share. How many dollars you pay for $1 of profit.')}
-    ${metric('P/E (forward)', fmt.x(p.forwardPE, 1), '', 'Price ÷ next year\'s expected earnings.')}
-    ${metric('PEG', fmt.x(p.pegRatio), '', 'P/E divided by expected growth. Around 1 = fairly priced for its growth.')}
-    ${metric('EV / EBITDA', fmt.x(p.evToEbitda, 1), '', 'Enterprise value ÷ operating cash earnings. Compares companies regardless of debt.')}
-    ${metric('Price / book', fmt.x(p.priceToBook), '', 'Price ÷ book value per share.')}
-    ${metric('Dividend yield', fmt.pct(p.dividendYield, 2), p.payoutRatio != null ? `Payout ${fmt.pct(p.payoutRatio, 0)}` : '', 'Annual dividends ÷ price.')}
-    ${metric('ROE', fmt.pct(p.roe), '', 'Return on equity: profit ÷ shareholders\' equity.')}
-    ${metric('Profit margin', fmt.pct(p.profitMargin), p.operatingMargin != null ? `Operating ${fmt.pct(p.operatingMargin)}` : '', 'Net income ÷ revenue.')}
-    ${metric('Revenue growth', `<span class="${cls(p.revenueGrowth)}">${fmt.spct(p.revenueGrowth)}</span>`, 'Year over year', 'Most recent quarter vs the same quarter a year ago.')}
-    ${metric('Debt / equity', p.debtToEquity != null ? fmt.x(p.debtToEquity / 100) + 'x' : '—', '', 'Total debt ÷ shareholders\' equity.')}
-    ${metric('Analyst target', fmt.usdC(p.targetMeanPrice), upside != null ? `<span class="${cls(upside)}">${fmt.spct(upside)} upside</span> · ${p.analystCount || 0} analysts` : '', 'Average 12-month price target from Wall Street analysts.')}
-  </div>
-</details>`;
+  ${valuationHTML(s)}`;
   if (S.hist) {
     const hh = S.hist.tickers[s.symbol], cur = hh?.periods.find((x) => !x.to);
     const peek = !hh ? 'Never owned' : cur ? `Owned since ${fdate(cur.from)} · ${hh.trades.length} transactions` : `Owned ${hh.periods.map((x) => `${x.from.slice(0, 4)}–${x.to.slice(0, 4)}`).join(', ')} · ${hh.trades.length} transactions`;
@@ -1228,22 +1261,40 @@ function renderStockCard(err) {
   if (s.assetClass === 'Equity') loadIpsBeta(s.symbol);
 }
 // ---------- IPS checklist (stock-level rules only) ----------
+// Betas for the screener: 5-year weekly (shown on the Beta tile), 5-year monthly (cross-check, and the
+// fallback if weekly isn't available), and the IPS's own 2-year weekly adjusted beta — all from one download each.
 async function loadIpsBeta(sym) {
   const s = S.stock;
   if (s.ipsBeta !== undefined) return;
-  if (!S.api) { s.ipsBeta = null; refreshIps(); return; }
-  S.wk2 = S.wk2 || {};
-  try { await fetchSeries([sym, 'SPY'].filter((t) => !S.wk2[t]), '2y', '1wk', S.wk2); } catch { /* handled below */ }
+  if (!S.api) { s.ipsBeta = null; s.betas = {}; refreshIps(); refreshBeta(); return; }
+  S.wk5 = S.wk5 || {}; S.mo5 = S.mo5 || {};
+  await Promise.allSettled([
+    fetchSeries([sym, 'SPY'].filter((t) => !S.wk5[t]), '5y', '1wk', S.wk5),
+    fetchSeries([sym, 'SPY'].filter((t) => !S.mo5[t]), '5y', '1mo', S.mo5),
+  ]);
   if (S.stock?.symbol !== sym) return;
-  s.ipsBeta = weeklyAdjBeta(S.wk2[sym], S.wk2.SPY);
-  refreshIps();
+  s.ipsBeta = weeklyAdjBeta(S.wk5[sym], S.wk5.SPY, 104);
+  s.betas = { w5: regBeta(S.wk5[sym], S.wk5.SPY, 260, 52), m5: regBeta(S.mo5[sym], S.mo5.SPY, 60, 24) };
+  refreshIps(); refreshBeta();
 }
+function betaTileHTML(s) {
+  const B = s.betas, y = s.prof?.beta;
+  if (!B) return metric('Beta', '<span style="color:var(--muted)">…</span>', 'Loading 5 years of weekly prices', GLOSS.beta + ' Shown here: 5-year weekly beta vs the S&P 500.');
+  const ok = (a, b) => a != null && b != null && Math.abs(a - b) <= 0.25;
+  const check = [B.m5 ? `5-yr monthly ${fmt.x(B.m5.raw)}` : '', y != null ? `Yahoo ${fmt.x(y)}${B.m5 ? (ok(B.m5.raw, y) ? ' ✓' : ' ≠') : ''}` : ''].filter(Boolean).join(' · ');
+  const T = 'Raw beta from weekly (or monthly) returns vs the S&P 500 (SPY), dividends included. Cross-check: our 5-year monthly beta should land close to Yahoo\'s published beta, which is also 5-year monthly — ✓ means within 0.25. The IPS check above uses a different, IPS-defined measure: 2-year weekly, Bloomberg-adjusted.';
+  if (B.w5) return metric(`Beta · ${B.w5.n >= 250 ? '5-yr' : (B.w5.n / 52).toFixed(1) + '-yr'} weekly`, fmt.x(B.w5.raw), `${B.w5.n} weeks vs S&amp;P 500${check ? '<br>Check: ' + check : ''}`, T);
+  if (B.m5) return metric(`Beta · ${B.m5.n >= 58 ? '5-yr' : (B.m5.n / 12).toFixed(1) + '-yr'} monthly`, fmt.x(B.m5.raw), `${B.m5.n} months vs S&amp;P 500 (weekly unavailable)${y != null ? `<br>Check: Yahoo ${fmt.x(y)}${ok(B.m5.raw, y) ? ' ✓' : ' ≠'}` : ''}`, T);
+  if (y != null) return metric('Beta · 5-yr monthly', fmt.x(y), 'Yahoo Finance (our price history unavailable)', T);
+  return metric('Beta', '—', 'Not enough price history', T);
+}
+function refreshBeta() { const el = $('#betaTile'); if (el && S.stock) el.innerHTML = betaTileHTML(S.stock); }
 function refreshIps() { const el = $('#ipsBox'); if (el) el.innerHTML = ipsHTML(); }
 function ipsHTML() {
   const s = S.stock;
   const row = calc.rows.find((r) => r.ticker === s.symbol);
   const firstBuy = s.held ? (S.hist?.tickers?.[s.symbol]?.periods?.slice(-1)[0]?.from || s.held.purchaseDate) : null;
-  const checks = stockChecks({ spx: s.spx, prof: s.prof, m: s.m, held: !!row, firstBuy, beta: s.ipsBeta, weightNow: row?.weight, total: calc.total, price: s.price });
+  const checks = stockChecks({ spx: s.spx, prof: s.prof, capFailed: s.profFailed, m: s.m, held: !!row, firstBuy, beta: s.ipsBeta, weightNow: row?.weight, total: calc.total, price: s.price });
   const fails = checks.filter((c) => c.status === 'fail');
   const elig = checks.filter((c) => c.group === 'Eligibility');
   const passE = elig.filter((c) => c.status === 'pass').length, pend = elig.some((c) => c.status === 'pending');
@@ -1353,7 +1404,7 @@ async function drawStockChart() {
   }
   const rP = ret(px), rT = ret(tr);
   const lo = Math.min(...px), hi = Math.max(...px);
-  $('#stkStats').innerHTML = `<span>Price <b class="${cls(rP)}">${fmt.spct(rP)}</b></span>${Math.abs(rT - rP) > 0.0005 ? `<span>With dividends <b class="${cls(rT)}">${fmt.spct(rT)}</b></span>` : ''}<span>Range ${fmt.usdC(lo)} – ${fmt.usdC(hi)}</span>${long ? '<span style="color:var(--muted)">Weekly prices</span>' : ''}`;
+  $('#stkStats').innerHTML = `<span>Price <b class="${cls(rP)}">${fmt.spct(rP)}</b></span>${Math.abs(rT - rP) > 0.0005 ? `<span>With dividends <b class="${cls(rT)}">${fmt.spct(rT)}</b></span>` : ''}<span title="Lowest and highest closing price in the period shown. The 52-week bar below uses intraday highs and lows, so it can be a little wider.">Closing range ${fmt.usdC(lo)} – ${fmt.usdC(hi)}</span>${long ? '<span style="color:var(--muted)">Weekly prices</span>' : ''}`;
   const avg = s.held?.avgCost;
   setChart('chStock', {
     grid: { left: 50, right: 16, top: 12, bottom: 24 },
@@ -1454,11 +1505,72 @@ function syncTradePanel() {
     <div><span>Action</span><b class="${t.side === 'buy' ? 'up' : 'down'}">${t.side.toUpperCase()} ${fmt.n(t.shares)} sh</b></div>
     <div><span>Price</span><b>${fmt.usdC(t.px)}</b></div>
     <div><span>Est. ${t.side === 'buy' ? 'cost' : 'proceeds'}</span><b>${fmt.usd(t.amount)}</b></div>
+    <div><span>Share of fund</span><b>${fmt.pct(t.amount / t.ac.total, 2)}</b></div>
     <div><span>${s.symbol} weight</span><b>${fmt.pct(t.ac.rows.find((r) => r.ticker === s.symbol)?.weight || 0, 2)} → ${fmt.pct(nr?.weight || 0, 2)}</b></div>
-    <div><span>Cash after</span><b class="${ac.cash < 0 ? 'down' : ''}">${fmt.usd(ac.cash)}</b></div>`;
+    ${gicsCalcRows(s, t.ac, ac)}
+    <div><span>Cash</span><b class="${ac.cash < 0 ? 'down' : ''}">${fmt.usd(t.ac.cash)} → ${fmt.usd(ac.cash)}</b></div>`;
   btn.disabled = false;
   btn.textContent = `Add ${t.side === 'buy' ? 'buy' : 'sell'} of ${fmt.n(t.shares)} ${s.symbol} to ticket`;
 }
+// GICS sector effect of the trade being typed (on top of anything already on the ticket)
+function gicsCalcRows(s, b, a) {
+  if (s.assetClass !== 'Equity') {
+    const k = s.assetClass === 'Fixed Income' ? 'fiValue' : null;
+    return k ? `<div class="calc-sec"><span>Fixed income share of fund</span><b>${fmt.pct(b[k] / b.total, 1)} → ${fmt.pct(a[k] / a.total, 1)}</b></div>` : '';
+  }
+  const sec = s.sector, bw = S.base.benchmark.sectorWeights[sec];
+  const w0 = b.sectors[sec]?.wEq || 0, w1 = a.sectors[sec]?.wEq || 0;
+  let h = `<div class="calc-sec"><span>GICS sector</span><b>${esc(sec)}</b></div>
+    <div><span>${esc(shortName(sec))} weight ${tip('Share of our stocks (equities only) in this GICS sector — the same basis the IPS sector rules use.')}</span><b>${fmt.pct(w0, 1)} → ${fmt.pct(w1, 1)}</b></div>`;
+  if (bw != null) {
+    const d0 = w0 - bw, d1 = w1 - bw;
+    // the rule covers every sector: buying one stock also dilutes all the others
+    const pushed = Object.keys(S.base.benchmark.sectorWeights).filter((x) => {
+      const b0 = (b.sectors[x]?.wEq || 0) - S.base.benchmark.sectorWeights[x], b1 = (a.sectors[x]?.wEq || 0) - S.base.benchmark.sectorWeights[x];
+      return Math.abs(b1) > IPS.sectorTrade + 1e-9 && Math.abs(b1) > Math.abs(b0) + 1e-9;
+    });
+    const st = !pushed.length ? ['up', '✓ within IPS'] : ['warn-t', `! ${pushed.map((x) => esc(shortName(x))).join(', ')} past ±2`];
+    h += `<div><span>vs S&amp;P 500 (${fmt.pct(bw, 1)})</span><b>${fmt.pts(d0)} → ${fmt.pts(d1)}</b></div>
+      <div><span>Sector rule (±2 pts per trade)</span><b class="${st[0]}">${st[1]}</b></div>`;
+  }
+  return h;
+}
+
+// pop-up: everything the ticket would change
+function openImpactPopup() {
+  if (!S.trades.length) return toast('Add a trade first');
+  renderImpact();
+  const before = computePortfolio(S.base, S.live ? S.market : {});
+  const after = computePortfolio(applyTrades(S.base, S.trades).port, simMarket());
+  const bw = S.base.benchmark.sectorWeights;
+  const buys = S.trades.filter((t) => t.side === 'buy').reduce((x, t) => x + t.shares * t.price, 0);
+  const sells = S.trades.filter((t) => t.side === 'sell').reduce((x, t) => x + t.shares * t.price, 0);
+  const touched = new Set(S.trades.map((t) => t.sector));
+  const secs = SECTORS.filter((x) => before.sectors[x] || after.sectors[x] || bw[x] != null);
+  const rowsH = secs.map((x) => {
+    const w0 = before.sectors[x]?.wEq || 0, w1 = after.sectors[x]?.wEq || 0, b = bw[x] ?? 0, d0 = w0 - b, d1 = w1 - b;
+    const moved = Math.abs(w1 - w0) > 5e-5;
+    const worse = moved && Math.abs(d1) > Math.abs(d0) + 1e-9;
+    const flag = Math.abs(d1) > IPS.sectorRebalance ? `<span class="down">${worse ? 'Pushed outside ±3 ⚠' : 'Outside ±3 (rebalance)'}</span>`
+      : Math.abs(d1) > IPS.sectorTrade ? (worse ? '<span class="warn-t">Pushed past ±2 ⚠</span>' : '<span style="color:var(--muted)">Already past ±2</span>') : '<span class="up">OK</span>';
+    return `<tr class="${moved || touched.has(x) ? 'imp-hit' : 'imp-dim'}"><td>${esc(x)}</td><td class="n">${fmt.pct(w0, 1)}</td><td class="n">${moved ? `<b>${fmt.pct(w1, 1)}</b>` : fmt.pct(w1, 1)}</td><td class="n">${fmt.pct(b, 1)}</td><td class="n">${fmt.pts(d0)} → ${fmt.pts(d1)}</td><td class="n">${flag}</td></tr>`;
+  }).join('');
+  const b = modal(`<h2>Trade impact</h2>
+    <p style="margin-top:-4px">${S.trades.length} trade${S.trades.length > 1 ? 's' : ''} on the ticket: ${S.trades.map((t) => `<b class="${t.side === 'buy' ? 'up' : 'down'}">${t.side === 'buy' ? '+' : '−'}${fmt.n(t.shares)} ${esc(t.ticker)}</b>`).join(', ')}</p>
+    <div class="tr-sum">
+      <div><small>Cost of buys</small><b>${fmt.usd(buys)}</b><div class="sub">${fmt.pct(buys / before.total, 2)} of the fund</div></div>
+      <div><small>Sale proceeds</small><b>${fmt.usd(sells)}</b><div class="sub">${fmt.pct(sells / before.total, 2)} of the fund</div></div>
+      <div><small>Cash</small><b class="${after.cash < 0 ? 'down' : ''}">${fmt.usd(before.cash)} → ${fmt.usd(after.cash)}</b><div class="sub">${after.cash < 0 ? 'Not enough cash — buys are paid from cash only' : `${fmt.pct(after.cash / after.total, 1)} of the fund after`}</div></div>
+    </div>
+    <h3 class="mt">GICS sector weights <span style="font-weight:400;color:var(--muted);font-size:12px">· share of our stocks</span></h3>
+    <div class="table-wrap"><table class="imp-table"><thead><tr><th>Sector</th><th class="n">Now</th><th class="n">After</th><th class="n">S&amp;P 500</th><th class="n">vs S&amp;P (pts)</th><th class="n">IPS ${tip('IPS: no trade may push a sector more than ±2 pts from the S&P 500; rebalance beyond ±3 pts. A buy dilutes every other sector, so sectors you didn\'t trade can move too.')}</th></tr></thead><tbody>${rowsH}</tbody></table></div>
+    <h3 class="mt">Everything else that changes</h3>
+    <div class="imp-pop">${$('#impact').innerHTML}</div>
+    <div class="row mt" style="justify-content:flex-end"><button class="btn" id="impClose">Close</button></div>`);
+  b.classList.add('wide');
+  $('#impClose', b).onclick = closeModal;
+}
+
 function mkTrade(t) {
   const s = S.stock;
   if (s.manual) s.sector = $('#manualSector').value || s.sector;
@@ -2191,8 +2303,9 @@ $('#addTrade').addEventListener('click', () => {
   store.set('ticket', S.trades);
   $('#amtInput').value = '';
   renderTicket(); syncTradePanel();
-  toast(`Added ${t.side} ${t.shares} ${S.stock.symbol}`);
+  openImpactPopup();
 });
+$('#reviewImpact').addEventListener('click', openImpactPopup);
 $('#clearTicket').addEventListener('click', () => { S.trades = []; store.set('ticket', []); renderTicket(); syncTradePanel(); });
 $('#saveScenario').addEventListener('click', saveScenario);
 $('#loadScenario').addEventListener('click', loadScenario);

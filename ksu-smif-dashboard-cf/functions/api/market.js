@@ -11,7 +11,7 @@ export async function onRequestGet({ request, waitUntil }) {
   const u = new URL(request.url);
   const symbols = [...new Set((u.searchParams.get('symbols') || '').split(',').map(cleanSymbol).filter(Boolean))].slice(0, 40);
   const range = RANGES.has(u.searchParams.get('range')) ? u.searchParams.get('range') : '1y';
-  const interval = u.searchParams.get('interval') === '1wk' ? '1wk' : '1d';
+  const interval = ['1wk', '1mo'].includes(u.searchParams.get('interval')) ? u.searchParams.get('interval') : '1d';
   if (!symbols.length) return json({ error: 'Pass ?symbols=AAPL,MSFT' }, 400);
 
   // edge cache (keyed by the normalized request)

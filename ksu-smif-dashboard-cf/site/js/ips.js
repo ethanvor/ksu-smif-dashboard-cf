@@ -20,6 +20,22 @@ const DEVELOPED = /nasdaq|nyse|bats|cboe|toronto|tsx|london|lse|xetra|frankfurt|
 const NOT_DEVELOPED = /otc|pink|grey|other otc/i;
 
 /** Weekly adjusted beta (Bloomberg style: 0.67 × raw + 0.33) from weekly adjusted closes vs SPY, last ~2 years. */
+/** Plain (raw) OLS beta of period returns vs SPY over the last n periods, matched by date. */
+export function regBeta(m, spy, n, minN = 24) {
+  if (!m?.dates?.length || !spy?.dates?.length) return null;
+  const sm = new Map(spy.dates.map((d, i) => [d, spy.closes[i]]));
+  const pairs = [];
+  for (let i = 1; i < m.dates.length; i++) {
+    const a = sm.get(m.dates[i - 1]), b = sm.get(m.dates[i]);
+    if (a && b && m.closes[i - 1] && m.closes[i]) pairs.push([m.closes[i] / m.closes[i - 1] - 1, b / a - 1]);
+  }
+  const p = pairs.slice(-n);
+  if (p.length < minN) return null;
+  const mx = p.reduce((t, x) => t + x[1], 0) / p.length, my = p.reduce((t, x) => t + x[0], 0) / p.length;
+  let cov = 0, v = 0; p.forEach(([y, x]) => { cov += (x - mx) * (y - my); v += (x - mx) ** 2; });
+  return { raw: cov / v, n: p.length, from: m.dates[m.dates.length - p.length - 1] };
+}
+
 export function weeklyAdjBeta(m, spy, weeks = 104) {
   if (!m?.dates?.length || !spy?.dates?.length) return null;
   const sm = new Map(spy.dates.map((d, i) => [d, spy.closes[i]]));
@@ -63,9 +79,9 @@ export function stockChecks(ctx) {
   out.push(null);
   if (beta === undefined) add('Eligibility', '2-year weekly adjusted beta ≤ 2', 'pending', 'Calculating…', '');
   else if (beta === null) add('Eligibility', '2-year weekly adjusted beta ≤ 2', 'pending', 'Not enough price history', 'Needs about two years of weekly prices.');
-  else add('Eligibility', '2-year weekly adjusted beta ≤ 2', beta.adj <= IPS.maxBeta ? 'pass' : 'fail', `${beta.adj.toFixed(2)} (raw ${beta.raw.toFixed(2)}, ${beta.weeks} weeks)`, 'Weekly returns vs the S&P 500 over the last 2 years, adjusted like Bloomberg: 0.67 × raw beta + 0.33.');
+  else add('Eligibility', '2-year weekly adjusted beta ≤ 2', beta.adj <= IPS.maxBeta ? 'pass' : 'fail', `${beta.adj.toFixed(2)} (raw ${beta.raw.toFixed(2)}, ${beta.weeks} weeks)`, 'The IPS measure: weekly returns vs the S&P 500 over the last 2 years, adjusted like Bloomberg (0.67 × raw beta + 0.33). It differs from the Beta tile below, which is the raw 5-year weekly beta.');
   const cap = prof?.marketCap ?? null;
-  add('Eligibility', 'Market cap above $2B', cap == null ? 'pending' : cap > IPS.minMktCap ? 'pass' : 'fail', cap == null ? 'Market cap not available' : fmtB(cap), 'IPS: market cap > $2B.');
+  add('Eligibility', 'Market cap above $2B', cap == null ? (ctx.capFailed ? 'info' : 'pending') : cap > IPS.minMktCap ? 'pass' : 'fail', cap == null ? (ctx.capFailed ? 'Couldn\'t load right now — confirm on Bloomberg' : 'Loading…') : fmtB(cap) + (prof?.capNote === 'shares × last price' ? ' (shares × last price)' : ''), 'IPS: market cap > $2B.');
   const ex = m?.exchange || prof?.exchange || '';
   const dev = ex ? !NOT_DEVELOPED.test(ex) && DEVELOPED.test(ex) : null;
   add('Eligibility', 'Listed on a developed-market exchange', dev == null ? 'pending' : dev ? 'pass' : 'fail', ex || 'Exchange not available', 'IPS: must be traded on developed market exchanges (e.g. NYSE, Nasdaq, London, Toronto, Tokyo). OTC listings don\'t count.');

@@ -116,6 +116,9 @@ export async function summary(symbol) {
     summary: a.longBusinessSummary ? a.longBusinessSummary.slice(0, 900) : null,
     employees: a.fullTimeEmployees ?? null,
     marketCap: v(p.marketCap) ?? v(sd.marketCap),
+    sharesOutstanding: v(ks.sharesOutstanding) ?? v(ks.impliedSharesOutstanding),
+    price: v(p.regularMarketPrice),
+    exchange: p.exchangeName || null,
     trailingPE: v(sd.trailingPE),
     forwardPE: v(sd.forwardPE) ?? v(ks.forwardPE),
     pegRatio: v(ks.pegRatio),
@@ -139,6 +142,18 @@ export async function summary(symbol) {
     twoHundredDayAvg: v(sd.twoHundredDayAverage),
     avgVolume: v(sd.averageVolume),
   };
+}
+
+// Yahoo's lighter quote endpoint: a second route to market cap / shares when quoteSummary is slow or blocked.
+export async function quote(symbol) {
+  const go = (s) => fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}&crumb=${encodeURIComponent(s.crumb)}`, { headers: { 'user-agent': UA, cookie: s.cookie } });
+  let s = await getSession();
+  let r = await go(s);
+  if (r.status === 401 || r.status === 403) { s = await getSession(true); r = await go(s); }
+  if (!r.ok) throw new Error(`quote ${symbol}: HTTP ${r.status}`);
+  const q = (await r.json())?.quoteResponse?.result?.[0];
+  if (!q) throw new Error('No quote');
+  return { symbol, name: q.longName || q.shortName || symbol, marketCap: q.marketCap ?? null, sharesOutstanding: q.sharesOutstanding ?? null, price: q.regularMarketPrice ?? null, exchange: q.fullExchangeName || null, beta: q.beta ?? null, trailingPE: q.trailingPE ?? null, forwardPE: q.forwardPE ?? null, quoteType: q.quoteType };
 }
 
 export async function search(q) {

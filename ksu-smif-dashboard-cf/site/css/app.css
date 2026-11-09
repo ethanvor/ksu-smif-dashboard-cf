@@ -689,3 +689,27 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 .imp-table tr.imp-hit td:first-child { font-weight: 700; color: var(--ink); }
 .imp-pop .impact-row { padding: 7px 0; }
 .tr-sum .sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* previously owned banner (Screener) */
+.tag.prev-tag { color: var(--gold-text); border-color: rgba(255,198,41,.45); background: rgba(255,198,41,.08); }
+.prev-owned { border: 1px solid rgba(255,198,41,.38); background: linear-gradient(90deg, rgba(255,198,41,.10), rgba(255,198,41,.03)); border-radius: 12px; padding: 12px 14px; }
+.prev-owned .po-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prev-owned .po-badge { font-weight: 800; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--gold-text); }
+.prev-owned .po-span { font-size: 12px; color: var(--ink-2); flex: 1 1 auto; min-width: 0; }
+.prev-owned .po-more { margin-left: auto; }
+.prev-owned .po-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 16px; margin-top: 10px; font-size: 13px; }
+.prev-owned .po-grid > div { min-width: 0; overflow-wrap: anywhere; }
+.prev-owned .po-k { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 2px; }
+@media (max-width: 720px) { .prev-owned .po-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prev-owned .po-more { margin-left: 0; } }
+
+.cmp-field { position: relative; flex: 1; min-width: 0; }
+.cmp-field .input { width: 100%; }
+.cmp-field .suggest { min-width: 280px; }
+.cmp-box .input#cmpInput { text-transform: none; }
+.stock-chart-bar { flex-wrap: wrap; row-gap: 8px; }
+.stock-chart-bar .cmp-box { flex: 1 1 280px; max-width: none; }
+.stock-chart-bar .cmp-box .btn { flex: 0 0 auto; white-space: nowrap; }
+.cmp-box .cmp-field { flex: 1 1 0; min-width: 0; }
+.cmp-box .cmp-field .input#cmpInput { width: 100% !important; flex: none !important; }
+.stock-chart-bar .cmp-box { max-width: 480px; }
+@media (max-width: 600px) { .stock-chart-bar .cmp-box { max-width: none; } .cmp-field .suggest { min-width: 0; } }

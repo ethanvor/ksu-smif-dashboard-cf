@@ -995,6 +995,27 @@ document.addEventListener('change', (e) => {
   document.querySelectorAll('.hist-tx').forEach((w) => (w.innerHTML = txTableHTML(w.dataset.sym, +w.dataset.limit)));
 });
 
+// Banner on the stock card for a stock the fund used to own: when we exited, at what price, and how it has done since.
+function prevOwnedHTML(s) {
+  const h = S.hist?.tickers?.[s.symbol];
+  if (s.held || !h?.periods?.length) return '';
+  const last = h.periods[h.periods.length - 1];
+  const sells = h.trades.filter((t) => t.type === 'Sell' && Math.abs(t.shares) > 0.999 && t.date <= (last.to || '9999'));
+  const ls = sells[sells.length - 1];
+  const px = ls ? ls.price || Math.abs(ls.amount) / Math.abs(ls.shares) : null;
+  const since = px && s.price ? s.price / px - 1 : null;
+  const spans = h.periods.map((p) => `${fdate(p.from)} – ${fdate(p.to)}`).join(' · ');
+  const bits = [
+    `<span class="po-k">Last position sold</span><b>${fdate(last.to)}</b>${px ? ` at ${fmt.usdC(px)}` : ''}`,
+    since != null ? `<span class="po-k">Since we sold</span><b class="${cls(since)}">${fmt.spct(since)}</b>${s.price ? ` (now ${fmt.usdC(s.price)})` : ''}` : '',
+    `<span class="po-k">Realized gain</span><b class="${cls(h.realized)}">${fmt.usd(h.realized)}</b>`,
+    `<span class="po-k">Owned</span><b>${h.periods.length === 1 ? 'once' : h.periods.length + ' times'}</b>`,
+  ].filter(Boolean).map((x) => `<div>${x}</div>`).join('');
+  return `<div class="prev-owned mt" role="note">
+    <div class="po-head"><span class="po-badge">🕘 Previously owned</span><span class="po-span">${spans}</span><button class="btn sm ghost po-more" type="button" onclick="const d=document.querySelector('[data-fold=hist]');if(d){d.open=true;d.scrollIntoView({behavior:'smooth',block:'start'})}">Full history</button></div>
+    <div class="po-grid">${bits}</div></div>`;
+}
+
 function historyHTML(sym, opts = {}) {
   const h = S.hist?.tickers?.[sym];
   if (!S.hist) return '';
@@ -1089,35 +1110,110 @@ function renderHistoryLists() {
 // ======================================================================
 function universe() {
   const m = new Map();
-  (S.base.spxConstituents || []).forEach((x) => m.set(x.ticker, { symbol: x.ticker, name: x.name, sector: x.sector, spx: x.weight }));
-  S.base.holdings.forEach((h) => m.set(h.ticker, { ...(m.get(h.ticker) || {}), symbol: h.ticker, name: h.name, sector: h.sector, held: true }));
+  const put = (sym, o) => m.set(sym, { ...(m.get(sym) || {}), symbol: sym, ...o });
+  Object.values(S.hist?.tickers || {}).forEach((t) => t.name && put(t.ticker, { name: t.name, past: true }));
+  [['SPY', 'SPDR S&P 500 ETF (S&P 500 index)'], ['AGG', 'iShares Core US Aggregate Bond ETF'], ['QQQ', 'Invesco QQQ (Nasdaq-100)'], ['DIA', 'SPDR Dow Jones Industrial Average ETF'], ['IWM', 'iShares Russell 2000 ETF'], ['BIL', 'SPDR 1-3 Month T-Bill ETF']].forEach(([t, n]) => put(t, { name: n, type: 'ETF' }));
+  (S.base.spxConstituents || []).forEach((x) => put(x.ticker, { name: x.name, sector: x.sector, spx: x.weight }));
+  [...(S.base.watchlist || []), ...(S.base.focusList || [])].forEach((t) => { if (!m.has(t)) put(t, { name: '', type: 'Watchlist' }); });
+  S.base.holdings.forEach((h) => put(h.ticker, { name: h.name, sector: h.sector, held: true }));
   return [...m.values()];
 }
-let sugIdx = -1, sugTimer;
-function renderSuggest(list) {
-  const box = $('#scrSuggest');
-  if (!list.length) { box.classList.remove('open'); return; }
-  box.innerHTML = list.slice(0, 8).map((x, i) => `<div data-s="${esc(x.symbol)}" class="${i === sugIdx ? 'hl' : ''}"><span><b>${esc(x.symbol)}</b> ${esc(x.name || '')}</span><small>${x.held ? 'HELD · ' : ''}${esc(x.sector || x.exchange || x.type || '')}</small></div>`).join('');
-  box.classList.add('open');
-  $$('div', box).forEach((d) => d.addEventListener('mousedown', (e) => { e.preventDefault(); analyze(d.dataset.s); }));
+// ---------- broad search: tickers, company names, nicknames, missing spaces/hyphens and small typos ----------
+// "t mobile", "tmobile", "T-Mobile" → TMUS · "coke" → KO · "nvida" → NVDA
+const normQ = (x) => String(x || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+const NAME_JUNK = /\b(inc|incorporated|corp|corporation|company|co|ltd|limited|plc|holdings?|group|the|class [a-c]|common stock|n\.?v|s\.?a|ag|se|lp|trust)\b\.?/gi;
+const SEARCH_ALIASES = { tmobile: 'TMUS', google: 'GOOGL', alphabet: 'GOOGL', facebook: 'META', coke: 'KO', cocacola: 'KO', pepsi: 'PEP', jpmorgan: 'JPM', jpm: 'JPM', chase: 'JPM', berkshire: 'BRK-B', att: 'T', walmart: 'WMT', mcdonalds: 'MCD', exxon: 'XOM', goldman: 'GS', goldmansachs: 'GS', bofa: 'BAC', bankofamerica: 'BAC', wellsfargo: 'WFC', unitedhealth: 'UNH', lilly: 'LLY', elililly: 'LLY', jnj: 'JNJ', johnsonandjohnson: 'JNJ', pg: 'PG', proctergamble: 'PG', proctorandgamble: 'PG', proctorgamble: 'PG', amex: 'AXP', homedepot: 'HD', lockheed: 'LMT', lockheedmartin: 'LMT', raytheon: 'RTX', disney: 'DIS', sp500: 'SPY', snp500: 'SPY', snp: 'SPY', sandp: 'SPY', sandp500: 'SPY', nasdaq: 'QQQ', dow: 'DIA', russell: 'IWM', tbills: 'BIL', bonds: 'AGG', tsmc: 'TSM', taiwansemi: 'TSM', taiwansemiconductor: 'TSM', toyota: 'TM', sony: 'SONY', asml: 'ASML', alibaba: 'BABA', shopify: 'SHOP', spotify: 'SPOT', palantir: 'PLTR', coinbase: 'COIN', robinhood: 'HOOD', snowflake: 'SNOW', airbnb: 'ABNB', blackrock: 'BLK', cvs: 'CVS', ups: 'UPS', fedex: 'FDX', ibm: 'IBM', amd: 'AMD', hp: 'HPQ', dell: 'DELL', ge: 'GE', gm: 'GM', ford: 'F', tesla: 'TSLA', nvidia: 'NVDA', microsoft: 'MSFT', apple: 'AAPL', amazon: 'AMZN', netflix: 'NFLX', costco: 'COST', starbucks: 'SBUX', nike: 'NKE', boeing: 'BA', intel: 'INTC', broadcom: 'AVGO', salesforce: 'CRM', oracle: 'ORCL', paypal: 'PYPL', visa: 'V', mastercard: 'MA', verizon: 'VZ', chevron: 'CVX', pfizer: 'PFE', merck: 'MRK', abbvie: 'ABBV', uber: 'UBER' };
+function lev(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]; let best = i;
+    for (let j = 1; j <= b.length; j++) { cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); best = Math.min(best, cur[j]); }
+    if (best > max) return max + 1; prev = cur;
+  }
+  return prev[b.length];
 }
-function onSearchInput() {
-  const q = $('#scrInput').value.trim();
-  sugIdx = -1;
-  if (!q) return renderSuggest([]);
-  const ql = q.toLowerCase();
-  const local = universe().filter((x) => x.symbol.toLowerCase().startsWith(ql) || (x.name || '').toLowerCase().includes(ql))
-    .sort((a, b) => (b.symbol.toLowerCase() === ql) - (a.symbol.toLowerCase() === ql) || (b.held ? 1 : 0) - (a.held ? 1 : 0) || (b.spx || 0) - (a.spx || 0));
-  renderSuggest(local);
-  clearTimeout(sugTimer);
-  if (S.api && q.length >= 2) sugTimer = setTimeout(async () => {
+function findSymbols(q) {
+  const qn = normQ(q); if (!qn) return [];
+  const qw = String(q).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const alias = SEARCH_ALIASES[qn];
+  const out = [];
+  universe().forEach((x) => {
+    const sn = normQ(x.symbol), clean = String(x.name || '').replace(NAME_JUNK, ' '), nn = normQ(clean);
+    const words = clean.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    let sc = 0;
+    if (sn === qn) sc = 100;
+    else if (alias === x.symbol) sc = 96;
+    else if (nn && nn === qn) sc = 92;
+    else if (nn.startsWith(qn) && qn.length >= 2) sc = 82;
+    else if (qn.length <= 5 && sn.startsWith(qn)) sc = 76;
+    else if (qw.length && qw.every((w) => words.some((n) => n.startsWith(w)))) sc = 72;
+    else if (qn.length >= 3 && nn.includes(qn)) sc = 62;
+    else if (qn.length >= 4) {
+      const max = qn.length >= 8 ? 2 : 1;
+      if (lev(nn.slice(0, qn.length), qn, max) <= max || words.some((w) => w.length >= 4 && lev(w, qn, max) <= max)) sc = 45;
+    }
+    if (sc) out.push({ ...x, score: sc });
+  });
+  if (alias && !out.some((x) => x.symbol === alias)) out.push({ symbol: alias, name: '', score: 96 });
+  return out.sort((a, b) => b.score - a.score || (b.held ? 1 : 0) - (a.held ? 1 : 0) || (b.spx || 0) - (a.spx || 0) || (b.past ? 1 : 0) - (a.past ? 1 : 0));
+}
+// Turn whatever was typed into a ticker: exact ticker → it; otherwise the best name match; otherwise Yahoo's search.
+async function resolveSymbol(q) {
+  const raw = String(q || '').trim(); if (!raw) return '';
+  const tick = raw.toUpperCase().replace(/[^A-Z0-9.\-^=]/g, '');
+  const hits = findSymbols(raw);
+  if (hits[0] && (hits[0].score >= 96 || hits[0].symbol === tick)) return hits[0].symbol;
+  const tickerish = /^[A-Za-z]{1,5}([.\-][A-Za-z]{1,2})?$/.test(raw);
+  if (hits[0] && hits[0].score >= 60 && !(tickerish && raw === raw.toUpperCase())) return hits[0].symbol;
+  if (S.api && !(tickerish && raw === raw.toUpperCase())) {
     try {
-      const r = await getJSON(`/api/profile?q=${encodeURIComponent(q)}`, {}, 6000);
-      if ($('#scrInput').value.trim() !== q) return;
-      const seen = new Set(local.map((x) => x.symbol));
-      renderSuggest([...local, ...r.results.filter((x) => !seen.has(x.symbol))]);
-    } catch { /* local suggestions are enough */ }
-  }, 300);
+      const r = await getJSON(`/api/profile?q=${encodeURIComponent(raw)}`, {}, 4000);
+      const y = r.results?.[0], qn = normQ(raw);
+      // trust Yahoo's top hit if it looks like what was typed; otherwise prefer our own close match (typos like "nvida")
+      const looks = y && (normQ(y.symbol).startsWith(qn.slice(0, 3)) || lev(normQ(String(y.name || '').replace(NAME_JUNK, ' ')).slice(0, qn.length), qn, 2) <= 2 || normQ(y.name).includes(qn));
+      if (y && (looks || !hits[0] || hits[0].score < 45)) return y.symbol;
+    } catch { /* fall through */ }
+  }
+  if (hits[0] && hits[0].score >= 45 && !(tickerish && raw === raw.toUpperCase())) return hits[0].symbol;
+  return tick;
+}
+// one search box with a suggestion list (used by the screener and the compare box)
+function attachSearch(input, box, pick) {
+  let idx = -1, timer;
+  const show = (list) => {
+    idx = -1;
+    if (!list.length) { box.classList.remove('open'); return; }
+    box.innerHTML = list.slice(0, 8).map((x) => `<div data-s="${esc(x.symbol)}"><span><b>${esc(x.symbol)}</b> ${esc(x.name || '')}</span><small>${x.held ? 'HELD · ' : x.past ? 'PAST · ' : ''}${esc(x.sector || x.exchange || x.type || '')}</small></div>`).join('');
+    box.classList.add('open');
+    $$('div', box).forEach((d) => d.addEventListener('mousedown', (e) => { e.preventDefault(); box.classList.remove('open'); pick(d.dataset.s); }));
+  };
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) return show([]);
+    const local = findSymbols(q);
+    show(local);
+    clearTimeout(timer);
+    if (S.api && q.length >= 2) timer = setTimeout(async () => {
+      try {
+        const r = await getJSON(`/api/profile?q=${encodeURIComponent(q)}`, {}, 6000);
+        if (input.value.trim() !== q) return;
+        const seen = new Set(local.map((x) => x.symbol));
+        show([...local, ...r.results.filter((x) => !seen.has(x.symbol))]);
+      } catch { /* local suggestions are enough */ }
+    }, 280);
+  });
+  input.addEventListener('keydown', async (e) => {
+    const items = $$('div', box);
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length) { e.preventDefault(); idx = Math.max(0, Math.min(items.length - 1, idx + (e.key === 'ArrowDown' ? 1 : -1))); items.forEach((d, i) => d.classList.toggle('hl', i === idx)); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const v = idx >= 0 && items[idx] ? items[idx].dataset.s : await resolveSymbol(input.value);
+      box.classList.remove('open'); pick(v);
+    }
+    if (e.key === 'Escape') box.classList.remove('open');
+  });
+  input.addEventListener('blur', () => setTimeout(() => box.classList.remove('open'), 150));
 }
 
 // Market cap at the last price. If Yahoo's figure is missing (or the profile is an older saved copy),
@@ -1219,18 +1315,19 @@ function renderStockCard(err) {
   const upside = p.targetMeanPrice && s.price ? p.targetMeanPrice / s.price - 1 : null;
   const pos52 = st && st.high52 > st.low52 ? (s.price - st.low52) / (st.high52 - st.low52) : null;
   let h = `<div class="stock-head">
-    <div><div class="row"><h2 style="font-size:24px">${esc(s.symbol)}</h2>${s.held ? `<span class="tag gold">In portfolio</span>` : ''}${s.spx ? `<span class="tag">S&amp;P 500 · ${fmt.pct(s.spx.weight, 2)}</span>` : ''}</div>
+    <div><div class="row"><h2 style="font-size:24px">${esc(s.symbol)}</h2>${s.held ? `<span class="tag gold">In portfolio</span>` : S.hist?.tickers?.[s.symbol] ? `<span class="tag prev-tag">Previously owned</span>` : ''}${s.spx ? `<span class="tag">S&amp;P 500 · ${fmt.pct(s.spx.weight, 2)}</span>` : ''}</div>
       <div style="color:var(--ink-2);margin-top:4px">${esc(s.name)}</div>
       ${s.assetClass === 'Equity' ? gicsLine(s) : `<div class="gics-line">${acTag(s.assetClass)}<span style="color:var(--muted)">${s.assetClass === 'Fixed Income' ? '· bond fund · compared with the Bloomberg US Aggregate (AGG), not the S&amp;P 500' : '· cash-like · earns roughly the T-bill yield'}${s.m?.exchange ? ' · ' + esc(s.m.exchange) : ''}</span></div>`}</div>
     <div class="px-wrap"><div class="px num">${s.price != null ? fmt.usdC(s.price) : '—'}</div>${day != null ? `<span class="chg ${day >= 0 ? 'up' : 'down'}">${fmt.spct(day, 2)} today</span>` : ''}
       <div style="color:var(--muted);font-size:11px;margin-top:6px">${s.live ? 'Live (delayed) · Yahoo Finance' : s.held ? 'Snapshot price from workbook' : 'No live data'}</div></div></div>`;
   if (err && !s.live) h += `<div class="warn-box">⚠ Couldn't load market data for ${esc(s.symbol)} (${esc(err)}). ${s.held ? 'Using the workbook price.' : 'Enter a price manually in the trade panel to simulate.'}</div>`;
   if (!S.api && !s.held) h += `<div class="warn-box">Live data is available once the site is deployed with its server functions. For now, type a price manually in the trade panel.</div>`;
-  if (hr) h += `<div class="warn-box ok" style="margin-top:12px"><span>We own <b>${fmt.n(hr.quantity, 2)} shares</b> worth ${fmt.usd(hr.value)} (${fmt.pct(hr.weight, 2)} of the fund) · avg cost ${fmt.usdC(hr.avgCost)} · ${fmt.spct(hr.ret)} since ${hr.purchaseDate}</span></div>`;
+  h += prevOwnedHTML(s);
+  if (hr) h += `<div class="warn-box ok" style="margin-top:12px"><span>We own <b>${fmt.n(hr.quantity, 2)} shares</b> worth ${fmt.usd(hr.value)} (${fmt.pct(hr.weight, 2)} of the fund) · avg cost ${fmt.usdC(hr.avgCost)} · ${fmt.spct(hr.ret)} since ${hr.purchaseDate ? fdate(hr.purchaseDate) : '—'}</span></div>`;
   if (m || s.held) h += `<div class="stock-chart-bar mt">
-      <div class="seg sm" id="stkRange">${['1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y'].map((r) => `<button data-v="${r}"${r === S.stockRange ? ' class="on"' : ''}>${r}</button>`).join('')}</div>
-      <div class="cmp-box"><input class="input" id="cmpInput" list="cmpList" placeholder="Compare with… (e.g. MSFT)" autocomplete="off" value="${esc(S.cmp || '')}" />
-        <datalist id="cmpList">${['SPY', 'AGG', ...allSymbols().filter((t) => t !== s.symbol)].map((t) => `<option value="${t}">`).join('')}</datalist>
+      <div class="seg sm" id="stkMode" title="Show % change (like the Overview) or the share price">${[['%', '% change'], ['$', 'Price']].map(([v, l]) => `<button data-v="${v}"${v === S.stockMode ? ' class="on"' : ''}>${l}</button>`).join('')}</div>
+      <div class="seg sm" id="stkRange">${['1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', '10Y'].map((r) => `<button data-v="${r}"${r === S.stockRange ? ' class="on"' : ''}>${r}</button>`).join('')}</div>
+      <div class="cmp-box"><div class="cmp-field"><input class="input" id="cmpInput" placeholder="Compare with… (MSFT, T-Mobile)" autocomplete="off" value="${esc(S.cmp || '')}" /><div class="suggest" id="cmpSuggest"></div></div>
         <button class="btn sm" id="cmpSpy" data-bench="${s.assetClass === 'Equity' ? 'SPY' : 'AGG'}" title="Compare with ${s.assetClass === 'Equity' ? 'the S&amp;P 500' : 'the Bloomberg US Aggregate bond index (AGG)'}">vs ${s.assetClass === 'Equity' ? 'S&amp;P' : 'AGG'}</button>${S.cmp ? '<button class="btn sm" id="cmpClear" title="Stop comparing">✕</button>' : ''}</div>
     </div><div class="row" id="stkStats" style="gap:18px;font-size:13px;color:var(--ink-2);margin:6px 0 0"></div>`;
   h += `<div id="chStock" class="chart short mt"></div>`;
@@ -1327,15 +1424,25 @@ function gicsLine(s) {
   return `<div class="gics-line"><span class="gics-k">GICS</span><span>${esc(g.sector || s.sector)}</span>${g.industry ? `<span class="gics-sep">›</span><span>${esc(g.industry)}</span>` : g.yahoo ? `<span class="gics-sep">·</span><span style="color:var(--muted)">${esc(g.yahoo)}</span>` : ''}${tip(t)}<span style="color:var(--muted)">${ex}</span></div>`;
 }
 S.stockRange = store.get('stockRange', '1Y');
+S.stockMode = store.get('stockMode', '%');
 S.cmp = null;
 S.wk = {};
-const stkLong = (r) => r === '3Y' || r === '5Y';
+const stkLong = (r) => r === '3Y' || r === '5Y' || r === '10Y';
 async function seriesFor(sym, long) {
   if (!long) {
     if (S.market[sym]) return S.market[sym];
     if (!S.api) return null;
     await fetchSeries([sym], '1y', '1d', S.market);
     return S.market[sym] || null;
+  }
+  if (long === '10Y') {
+    const need = rangeStart('10Y');
+    if (S.long[sym] && S.long[sym].dates[0] <= need) return S.long[sym];
+    S.wk10 = S.wk10 || {};
+    if (S.wk10[sym]) return S.wk10[sym];
+    if (!S.api) return S.long[sym] || S.wk[sym] || null;
+    await fetchSeries([sym], '10y', '1wk', S.wk10);
+    return S.wk10[sym] || S.long[sym] || S.wk[sym] || null;
   }
   if (S.long[sym]) return S.long[sym];
   if (S.wk[sym]) return S.wk[sym];
@@ -1344,6 +1451,11 @@ async function seriesFor(sym, long) {
   return S.wk[sym] || null;
 }
 function bindStockChart() {
+  $$('#stkMode button').forEach((b) => b.addEventListener('click', () => {
+    S.stockMode = b.dataset.v; store.set('stockMode', S.stockMode);
+    $$('#stkMode button').forEach((x) => x.classList.toggle('on', x === b));
+    drawStockChart();
+  }));
   $$('#stkRange button').forEach((b) => b.addEventListener('click', () => {
     S.stockRange = b.dataset.v; store.set('stockRange', S.stockRange);
     $$('#stkRange button').forEach((x) => x.classList.toggle('on', x === b));
@@ -1360,8 +1472,7 @@ function bindStockChart() {
   };
   const inp = $('#cmpInput');
   if (!inp) return;
-  inp.addEventListener('change', () => setCmp(inp.value));
-  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); setCmp(inp.value); } });
+  attachSearch(inp, $('#cmpSuggest'), setCmp);
   $('#cmpSpy').onclick = () => setCmp($('#cmpSpy').dataset.bench || 'SPY');
   if ($('#cmpClear')) $('#cmpClear').onclick = () => setCmp('');
 }
@@ -1373,9 +1484,10 @@ async function drawStockChart() {
   const token = (S.stkTok = (S.stkTok || 0) + 1);
   if (!s.m) { emptyChart('chStock', s.held ? 'Price history appears once live data is connected.' : 'No price history available.'); return; }
   if (long || cmp) $('#stkStats').innerHTML = '<span>Loading prices…</span>';
-  const [m, c] = await Promise.all([seriesFor(sym, long), cmp ? seriesFor(cmp, long) : null]);
+  const lk = r === '10Y' ? '10Y' : long;
+  const [m, c] = await Promise.all([seriesFor(sym, lk), cmp ? seriesFor(cmp, lk) : null]);
   if (token !== S.stkTok || S.stock.symbol !== sym) return;
-  if (!m) { emptyChart('chStock', `Couldn't load ${long ? '5-year' : ''} price history for ${sym}.`); $('#stkStats').innerHTML = ''; return; }
+  if (!m) { emptyChart('chStock', `Couldn't load ${long ? r.replace('Y', '-year') : ''} price history for ${sym}.`); $('#stkStats').innerHTML = ''; return; }
   const start = rangeStart(r);
   let i0 = m.dates.findIndex((d) => d >= start); if (i0 < 0) i0 = 0;
   const dates = m.dates.slice(i0);
@@ -1393,19 +1505,19 @@ async function drawStockChart() {
     if (ci > 0) cv = c.closes[ci - 1];
     const cAl = dates.map((d) => { const v = cm.get(d); if (v != null) cv = v; return cv; });
     const f0 = cAl.findIndex((v) => v != null);
-    const A = tr.map((v) => +((v / tr[0]) * 100).toFixed(2));
-    const B = f0 < 0 ? [] : cAl.map((v, i) => (i < f0 || v == null ? null : +((v / cAl[f0]) * 100).toFixed(2)));
+    const A = tr.map((v) => +((v / tr[0] - 1) * 100).toFixed(2));
+    const B = f0 < 0 ? [] : cAl.map((v, i) => (i < f0 || v == null ? null : +((v / cAl[f0] - 1) * 100).toFixed(2)));
     const rA = ret(tr), rB = f0 >= 0 ? cAl[cAl.length - 1] / cAl[f0] - 1 : null;
-    if (c) $('#stkStats').innerHTML = `<span><b style="color:${C.gold}">${esc(sym)}</b> <b class="${cls(rA)}">${fmt.spct(rA)}</b></span><span><b style="color:${C.grayLight}">${esc(cmp)}</b> <b class="${cls(rB)}">${fmt.spct(rB)}</b></span>${rB != null ? `<span>Difference <b class="${cls(rA - rB)}">${fmt.spct(rA - rB)}</b></span>` : ''}<span style="color:var(--muted)">Total return incl. dividends · start = 100</span>`;
+    if (c) $('#stkStats').innerHTML = `<span><b style="color:${C.gold}">${esc(sym)}</b> <b class="${cls(rA)}">${fmt.spct(rA)}</b></span><span><b style="color:${C.grayLight}">${esc(cmp)}</b> <b class="${cls(rB)}">${fmt.spct(rB)}</b></span>${rB != null ? `<span>Difference <b class="${cls(rA - rB)}">${fmt.spct(rA - rB)}</b></span>` : ''}<span style="color:var(--muted)">Total return incl. dividends</span>`;
     setChart('chStock', {
       grid: { left: 44, right: 96, top: 22, bottom: 24 },
       legend: { top: 0, right: 0, textStyle: { color: C.ink2 }, icon: 'roundRect', itemWidth: 12, itemHeight: 3 },
       tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: C.gold, opacity: 0.5 } },
-        formatter: (p) => `<b>${fdate(p[0].axisValue)}</b><br>` + p.filter((x) => x.value != null).map((x) => `${x.marker} ${x.seriesName}: ${fmt.spct(x.value / 100 - 1)}`).join('<br>') },
-      xAxis, yAxis: { type: 'value', scale: true, ...axisCommon },
+        formatter: (p) => `<b>${fdate(p[0].axisValue)}</b><br>` + p.filter((x) => x.value != null).map((x) => `${x.marker} ${x.seriesName}: ${fmt.spct(x.value / 100)}`).join('<br>') },
+      xAxis, yAxis: { type: 'value', scale: true, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (v > 0 ? '+' : '') + v + '%' } },
       series: [
-        { name: sym, type: 'line', data: A, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold }, endLabel: { show: true, color: C.ink, formatter: (p) => `${sym} ${fmt.spct(p.value / 100 - 1)}` }, labelLayout: { moveOverlap: 'shiftY' } },
-        { name: cmp, type: 'line', data: B, showSymbol: false, connectNulls: true, lineStyle: { width: 2, color: C.grayLight }, itemStyle: { color: C.grayLight }, endLabel: { show: true, color: C.ink2, formatter: (p) => `${cmp} ${fmt.spct(p.value / 100 - 1)}` }, labelLayout: { moveOverlap: 'shiftY' } },
+        { name: sym, type: 'line', data: A, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold }, endLabel: { show: true, color: C.ink, formatter: (p) => `${sym} ${fmt.spct(p.value / 100)}` }, labelLayout: { moveOverlap: 'shiftY' } },
+        { name: cmp, type: 'line', data: B, showSymbol: false, connectNulls: true, lineStyle: { width: 2, color: C.grayLight }, itemStyle: { color: C.grayLight }, endLabel: { show: true, color: C.ink2, formatter: (p) => `${cmp} ${fmt.spct(p.value / 100)}` }, labelLayout: { moveOverlap: 'shiftY' } },
       ],
     });
     return;
@@ -1414,6 +1526,7 @@ async function drawStockChart() {
   const lo = Math.min(...px), hi = Math.max(...px);
   $('#stkStats').innerHTML = `<span>Price <b class="${cls(rP)}">${fmt.spct(rP)}</b></span>${Math.abs(rT - rP) > 0.0005 ? `<span>With dividends <b class="${cls(rT)}">${fmt.spct(rT)}</b></span>` : ''}<span title="Lowest and highest closing price in the period shown. The 52-week bar below uses intraday highs and lows, so it can be a little wider.">Closing range ${fmt.usdC(lo)} – ${fmt.usdC(hi)}</span>${long ? '<span style="color:var(--muted)">Weekly prices</span>' : ''}`;
   const avg = s.held?.avgCost;
+  if (S.stockMode === '%') return drawStockPct({ sym, dates, px, tr, trades, xAxis });
   setChart('chStock', {
     grid: { left: 50, right: 16, top: 12, bottom: 24 },
     tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: C.gold, opacity: 0.5 } },
@@ -1429,6 +1542,28 @@ async function drawStockChart() {
       markPoint: trades.length ? { symbolSize: 26, label: { color: '#111', fontWeight: 800, fontSize: 10 }, data: trades.map((t) => {
         const i = dates.findIndex((d) => d >= t.date); if (i < 0) return null;
         return { coord: [dates[i], px[i]], value: t.type === 'Buy' ? 'B' : 'S', symbol: 'pin', symbolRotate: t.type === 'Buy' ? 180 : 0, symbolOffset: [0, t.type === 'Buy' ? 14 : -14], itemStyle: { color: t.type === 'Buy' ? C.up : C.down }, label: { offset: [0, t.type === 'Buy' ? 3 : 0] } };
+      }).filter(Boolean) } : undefined }],
+  });
+}
+// % appreciation from the start of the period (total return incl. dividends), like the Overview chart
+function drawStockPct({ sym, dates, px, tr, trades, xAxis }) {
+  const P = tr.map((v) => +((v / tr[0] - 1) * 100).toFixed(2));
+  setChart('chStock', {
+    grid: { left: 50, right: 70, top: 12, bottom: 24 },
+    tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: C.gold, opacity: 0.5 } },
+      formatter: (p) => {
+        const d = p[0].axisValue, i = dates.indexOf(d), nd = dates[i + 1] || '9999';
+        const here = trades.filter((t) => t.date >= d && t.date < nd && dates.findIndex((x) => x >= t.date) === i);
+        return `<b>${fdate(d)}</b><br>${p[0].marker} <b>${fmt.spct(p[0].value / 100)}</b> since ${fdate(dates[0])}<br><span style="color:${C.muted}">Price ${fmt.usdC(px[i])}</span>` + here.map((t) => `<br><span style="color:${t.type === 'Buy' ? '#3ccf7f' : '#f0625a'}">We ${t.type === 'Buy' ? 'bought' : 'sold'} ${fmt.n(t.shares, 2)} sh @ ${fmt.usdC(t.price)}</span>`).join('');
+      } },
+    xAxis, yAxis: { type: 'value', scale: true, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (v > 0 ? '+' : '') + v + '%' } },
+    series: [{ name: sym, type: 'line', data: P, showSymbol: false, lineStyle: { width: 2, color: C.gold }, itemStyle: { color: C.gold },
+      endLabel: { show: true, color: C.ink, fontWeight: 700, formatter: (p) => fmt.spct(p.value / 100) },
+      areaStyle: { origin: 0, color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(255,198,41,0.20)' }, { offset: 1, color: 'rgba(255,198,41,0)' }]) },
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: C.muted, opacity: 0.5 }, label: { show: false }, data: [{ yAxis: 0 }] },
+      markPoint: trades.length ? { symbolSize: 26, label: { color: '#111', fontWeight: 800, fontSize: 10 }, data: trades.map((t) => {
+        const i = dates.findIndex((d) => d >= t.date); if (i < 0) return null;
+        return { coord: [dates[i], P[i]], value: t.type === 'Buy' ? 'B' : 'S', symbol: 'pin', symbolRotate: t.type === 'Buy' ? 180 : 0, symbolOffset: [0, t.type === 'Buy' ? 14 : -14], itemStyle: { color: t.type === 'Buy' ? C.up : C.down }, label: { offset: [0, t.type === 'Buy' ? 3 : 0] } };
       }).filter(Boolean) } : undefined }],
   });
 }
@@ -2291,15 +2426,8 @@ $('#rfInput').addEventListener('change', (e) => { const v = parseFloat(e.target.
 $('#refreshBtn').addEventListener('click', async () => { toast('Refreshing prices…'); await loadMarket(); refreshAll(); toast(S.live ? 'Prices updated' : 'Live data unavailable — showing snapshot'); });
 
 // screener wiring
-$('#scrInput').addEventListener('input', onSearchInput);
-$('#scrInput').addEventListener('keydown', (e) => {
-  const items = $$('#scrSuggest div');
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sugIdx = Math.max(0, Math.min(items.length - 1, sugIdx + (e.key === 'ArrowDown' ? 1 : -1))); items.forEach((d, i) => d.classList.toggle('hl', i === sugIdx)); }
-  if (e.key === 'Enter') { e.preventDefault(); analyze(sugIdx >= 0 && items[sugIdx] ? items[sugIdx].dataset.s : $('#scrInput').value); }
-  if (e.key === 'Escape') $('#scrSuggest').classList.remove('open');
-});
-$('#scrInput').addEventListener('blur', () => setTimeout(() => $('#scrSuggest').classList.remove('open'), 150));
-$('#scrGo').addEventListener('click', () => analyze($('#scrInput').value));
+attachSearch($('#scrInput'), $('#scrSuggest'), analyze);
+$('#scrGo').addEventListener('click', async () => analyze(await resolveSymbol($('#scrInput').value)));
 $$('#sideToggle button').forEach((b) => b.addEventListener('click', () => { S.trade.side = b.dataset.v; syncTradePanel(); }));
 $$('#amtMode button').forEach((b) => b.addEventListener('click', () => { S.trade.mode = b.dataset.v; $('#amtInput').value = ''; syncTradePanel(); }));
 ['amtInput', 'manualPx'].forEach((id) => $('#' + id).addEventListener('input', syncTradePanel));

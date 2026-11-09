@@ -156,16 +156,27 @@ export async function quote(symbol) {
   return { symbol, name: q.longName || q.shortName || symbol, marketCap: q.marketCap ?? null, sharesOutstanding: q.sharesOutstanding ?? null, price: q.regularMarketPrice ?? null, exchange: q.fullExchangeName || null, beta: q.beta ?? null, trailingPE: q.trailingPE ?? null, forwardPE: q.forwardPE ?? null, quoteType: q.quoteType };
 }
 
-export async function search(q) {
-  const r = await fetch(
-    `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0&listsCount=0`,
-    { headers: { 'user-agent': UA } }
-  );
+// Yahoo's search is picky about spacing and punctuation ("tmobile" finds nothing, "t-mobile" does),
+// so try a few spellings of the same words and merge the results.
+async function searchOnce(q) {
+  const r = await fetch(`https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0&listsCount=0`, { headers: { 'user-agent': UA } });
   if (!r.ok) throw new Error(`search: HTTP ${r.status}`);
   const j = await r.json();
   return (j.quotes || [])
     .filter((x) => x.symbol && ['EQUITY', 'ETF', 'MUTUALFUND', 'INDEX'].includes(x.quoteType))
     .map((x) => ({ symbol: x.symbol, name: x.longname || x.shortname, type: x.quoteType, exchange: x.exchDisp }));
+}
+export async function search(q) {
+  q = String(q).trim();
+  const v = [q, q.replace(/[-_.&/]+/g, ' ').replace(/\s+/g, ' ').trim(), q.replace(/[\s\-_.]+/g, '')];
+  if (/^[a-z]{5,}$/i.test(q)) v.push(q[0] + '-' + q.slice(1)); // "tmobile" → "t-mobile"
+  const variants = [...new Set(v.filter(Boolean))].slice(0, 4);
+  const res = await Promise.allSettled(variants.map(searchOnce));
+  const seen = new Set(), out = [];
+  res.forEach((r) => r.status === 'fulfilled' && r.value.forEach((x) => { if (!seen.has(x.symbol)) { seen.add(x.symbol); out.push(x); } }));
+  if (!out.length && res.every((r) => r.status === 'rejected')) throw res[0].reason;
+  // US listings first (no ".XX" exchange suffix), keeping Yahoo's order otherwise
+  return out.sort((a, b) => (a.symbol.includes('.') ? 1 : 0) - (b.symbol.includes('.') ? 1 : 0)).slice(0, 10);
 }
 
 // Run async tasks with a concurrency cap.

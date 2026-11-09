@@ -101,8 +101,22 @@ export function dropRestatements(text) {
   }).filter((l) => l !== null).join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
+// The model sometimes writes math in LaTeX (\[ \frac{a}{b} \]). The chat shows plain text, so turn it into readable math.
+export function plainMath(text) {
+  let t = String(text || '');
+  t = t.replace(/\$\$([\s\S]+?)\$\$/g, '$1').replace(/\\\[([\s\S]+?)\\\]/g, '$1').replace(/\\\(([\s\S]+?)\\\)/g, '$1');
+  for (let i = 0; i < 4; i++) t = t.replace(/\\(?:d|t)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (m, a, b) => `${/[\s+\-]/.test(a.trim()) ? `(${a.trim()})` : a.trim()} ÷ ${/[\s+\-]/.test(b.trim()) ? `(${b.trim()})` : b.trim()}`)
+    .replace(/\\(?:text|mathrm|textbf|mathbf|operatorname|left|right)\s*\{([^{}]*)\}/g, '$1');
+  const sym = { times: '×', cdot: '·', div: '÷', approx: '≈', leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', pm: '±', sum: 'Σ', sigma: 'σ', beta: 'β', alpha: 'α', Delta: 'Δ', infty: '∞', rightarrow: '→', to: '→' };
+  t = t.replace(/\\(times|cdot|div|approx|leq|le|geq|ge|neq|pm|sum|sigma|beta|alpha|Delta|infty|rightarrow|to)(?![a-zA-Z])/g, (m, k) => sym[k])
+    .replace(/\\([%$&#_])/g, '$1').replace(/\\(left|right|quad|qquad|,|;|!)/g, ' ')
+    .replace(/\^\{([^{}]*)\}/g, '^$1').replace(/_\{([^{}]*)\}/g, '_$1')
+    .replace(/\\[a-zA-Z]+/g, '').replace(/[{}]/g, '').replace(/[ \t]{2,}/g, ' ').replace(/^[ \t]+|[ \t]+$/gm, '');
+  return t;
+}
+
 export function checkAnswer(text) {
-  const t = stopRepeats(text);
+  const t = stopRepeats(plainMath(text));
   const l = t.toLowerCase();
   if (LEAK.some((x) => l.includes(x))) return REFUSAL;
   if (/\b(as an? (?:unrestricted|unfiltered|jailbroken)|dan:|developer mode (?:enabled|output))/i.test(t)) return REFUSAL;

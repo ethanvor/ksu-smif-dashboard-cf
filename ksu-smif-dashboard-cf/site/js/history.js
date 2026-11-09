@@ -21,8 +21,22 @@ export const DUST = 0.05; // fractional leftovers from old dividend reinvestment
 const iso = (v) => {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v === 'number') return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 10); // Excel serial
-  const d = new Date(v);
+  const t = String(v).replace(/^="?|"$/g, '').trim();
+  // Schwab CSV: "11/04/2026" or "11/04/2026 as of 11/01/2026" — read the first date as-is (no time-zone shift)
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (m) { const y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; }
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const d = new Date(t);
   return isNaN(d) ? null : d.toISOString().slice(0, 10);
+};
+// "$1,234.56", "-$12.00", "($12.00)" or a plain number
+const money = (v) => {
+  if (typeof v === 'number') return v;
+  const t = String(v ?? '').replace(/^="?|"$/g, '').trim();
+  if (!t) return 0;
+  const neg = /^\(.*\)$/.test(t) || /^-/.test(t);
+  const n = +t.replace(/[^0-9.]/g, '');
+  return isFinite(n) ? (neg ? -n : n) : 0;
 };
 const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
@@ -52,7 +66,7 @@ export function looksLikeTransactions(header) {
  */
 export function buildHistory(rows, source = 'Transaction history') {
   const r = rows
-    .map((x, i) => ({ ...x, i, day: iso(x.date), symbol: clean(x.symbol).toUpperCase(), q: +x.quantity || 0, amt: +x.amount || 0 }))
+    .map((x, i) => ({ ...x, i, day: iso(x.date), symbol: clean(x.symbol).toUpperCase(), q: money(x.quantity), amt: money(x.amount) }))
     .filter((x) => x.day && x.activity);
   // Export is newest-first: reverse for chronological order, keep same-day order sensible.
   r.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : (ORDER[a.activity] ?? 2) - (ORDER[b.activity] ?? 2) || b.i - a.i));

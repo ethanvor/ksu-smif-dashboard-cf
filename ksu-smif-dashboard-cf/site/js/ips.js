@@ -47,10 +47,11 @@ export function sizeLimits(benchW) {
 }
 
 const fmtB = (v) => (v >= 1e12 ? `$${(v / 1e12).toFixed(2)}T` : v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : `$${(v / 1e6).toFixed(0)}M`);
+const nice = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const pct = (v, d = 1) => `${(v * 100).toFixed(d)}%`;
 
 /**
- * Stock-level IPS checks. status: 'pass' | 'fail' | 'info' | 'pending'
+ * Stock-level IPS checks. status: 'pass' | 'fail' | 'warn' | 'info' | 'pending'
  * ctx: { spx, prof, m, held, firstBuy, beta, weightNow, total, price, today }
  */
 export function stockChecks(ctx) {
@@ -58,7 +59,8 @@ export function stockChecks(ctx) {
   const out = [];
   const add = (group, label, status, detail, tip) => out.push({ group, label, status, detail, tip });
   // --- eligibility ---
-  add('Eligibility', 'In the S&P 500', spx ? 'pass' : 'fail', spx ? `Index weight ${pct(spx.weight, 2)}` : 'Not in the current S&P 500 list', 'IPS: any company within the S&P 500 is investable.');
+  const spxAt = out.length; // S&P line is filled in after the other three checks
+  out.push(null);
   if (beta === undefined) add('Eligibility', '2-year weekly adjusted beta ≤ 2', 'pending', 'Calculating…', '');
   else if (beta === null) add('Eligibility', '2-year weekly adjusted beta ≤ 2', 'pending', 'Not enough price history', 'Needs about two years of weekly prices.');
   else add('Eligibility', '2-year weekly adjusted beta ≤ 2', beta.adj <= IPS.maxBeta ? 'pass' : 'fail', `${beta.adj.toFixed(2)} (raw ${beta.raw.toFixed(2)}, ${beta.weeks} weeks)`, 'Weekly returns vs the S&P 500 over the last 2 years, adjusted like Bloomberg: 0.67 × raw beta + 0.33.');
@@ -67,6 +69,17 @@ export function stockChecks(ctx) {
   const ex = m?.exchange || prof?.exchange || '';
   const dev = ex ? !NOT_DEVELOPED.test(ex) && DEVELOPED.test(ex) : null;
   add('Eligibility', 'Listed on a developed-market exchange', dev == null ? 'pending' : dev ? 'pass' : 'fail', ex || 'Exchange not available', 'IPS: must be traded on developed market exchanges (e.g. NYSE, Nasdaq, London, Toronto, Tokyo). OTC listings don\'t count.');
+  // S&P 500 membership qualifies a company outright, but it isn't required: a non-member that meets
+  // the other three eligibility rules can still be bought at the committee's discretion.
+  const others = out.slice(spxAt + 1).map((c) => c.status);
+  const SPX_TIP = 'Under the IPS, S&P 500 membership makes a company investable on its own. It is not a requirement: a company outside the index may still be considered if it meets the beta, market-cap and exchange criteria.';
+  out[spxAt] = spx
+    ? { group: 'Eligibility', label: 'In the S&P 500', status: 'pass', detail: `Index weight ${pct(spx.weight, 2)}`, tip: SPX_TIP }
+    : others.includes('fail')
+      ? { group: 'Eligibility', label: 'Not in the S&P 500', status: 'fail', detail: 'Outside the index and does not meet the other eligibility criteria below', tip: SPX_TIP }
+      : others.includes('pending')
+        ? { group: 'Eligibility', label: 'Not in the S&P 500', status: 'pending', detail: 'Outside the index — checking the other criteria…', tip: SPX_TIP }
+        : { group: 'Eligibility', label: 'Not in the S&P 500', status: 'warn', detail: 'Meets the beta, market-cap and exchange criteria, so it remains eligible at the committee\'s discretion.', tip: SPX_TIP };
   // --- what it counts toward (portfolio minimums are checked on trades) ---
   const us = prof?.country ? /united states|^us$|usa/i.test(prof.country) : null;
   add('Counts toward', 'US company', us == null ? 'info' : us ? 'pass' : 'info', us == null ? 'Country not available' : us ? 'Counts toward the 75% US minimum' : `${prof.country} — doesn't count toward the 75% US minimum`, 'IPS: at least 75% of the fund in US companies.');
@@ -74,7 +87,7 @@ export function stockChecks(ctx) {
   // --- position size ---
   const L = sizeLimits(spx?.weight);
   const $ = (w) => (total ? ` ≈ $${Math.round(w * total).toLocaleString()}${price ? ` (${Math.floor((w * total) / price)} sh)` : ''}` : '');
-  add('Position size', 'Allowed first purchase', 'info', `${pct(L.minInit, 0)}${$(L.minInit)} to ${pct(L.maxInit, 1)}${$(L.maxInit)}`, spx?.weight >= IPS.smallBench ? `Minimum 1%. Index weight is ${pct(spx.weight, 2)} (2% or more), so the maximum first purchase is the index weight + 2%.` : 'Minimum 1%. Index weight under 2%, so the maximum first purchase is 3%.');
+  add('Position size', 'Allowed first purchase', 'info', `${pct(L.minInit, 0)}${$(L.minInit)} to ${pct(L.maxInit, 1)}${$(L.maxInit)}`, spx?.weight >= IPS.smallBench ? `Minimum 1%. Index weight is ${pct(spx.weight, 2)} (2% or more), so the maximum first purchase is the index weight + 2%.` : spx ? 'Minimum 1%. Index weight under 2%, so the maximum first purchase is 3%.' : 'Minimum 1%. Not in the index (0% benchmark weight), so the under-2% limits apply: maximum first purchase 3%, never more than 5% of the fund.');
   if (held && weightNow != null) {
     if (L.maxHold != null) add('Position size', 'Our weight ≤ 5% (index weight under 2%)', weightNow <= L.maxHold ? 'pass' : 'fail', `We hold ${pct(weightNow, 2)}`, 'IPS: no stock under 2% of the benchmark may be more than 5% of the fund.');
     if (L.track) {
@@ -88,8 +101,8 @@ export function stockChecks(ctx) {
     const d3 = new Date(firstBuy); d3.setFullYear(d3.getFullYear() + IPS.horizonYears);
     const now = ctx.today || new Date();
     const iso = (d) => d.toISOString().slice(0, 10);
-    add('Holding period', 'Eligible to sell (held 1+ year)', now >= d1 ? 'pass' : 'warn', now >= d1 ? `Since ${iso(d1)}` : `Not until ${iso(d1)}, unless fundamentals shift significantly`, 'IPS: investment horizon of 3+ years; a position can be traded after 1 year if the company\'s fundamentals have shifted significantly.');
-    add('Holding period', '3-year horizon reached', now >= d3 ? 'pass' : 'info', now >= d3 ? `Since ${iso(d3)}` : `On ${iso(d3)}`, 'IPS: investment horizon of 3+ years.');
+    add('Holding period', 'Eligible to sell (held 1+ year)', now >= d1 ? 'pass' : 'warn', now >= d1 ? `Since ${nice(d1)}` : `Not until ${nice(d1)}, unless fundamentals shift significantly`, 'IPS: investment horizon of 3+ years; a position can be traded after 1 year if the company\'s fundamentals have shifted significantly.');
+    add('Holding period', '3-year horizon reached', now >= d3 ? 'pass' : 'info', now >= d3 ? `Since ${nice(d3)}` : `On ${nice(d3)}`, 'IPS: investment horizon of 3+ years.');
   } else add('Holding period', 'Plan to hold 3+ years', 'info', 'Selling is allowed after 1 year if the fundamentals shift significantly', 'IPS: investment horizon of 3+ years.');
   return out;
 }

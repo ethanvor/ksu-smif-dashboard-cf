@@ -668,3 +668,14 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 @media (min-width: 1381px) and (max-width: 1600px) { nav.tabs button { padding-left: 11px !important; padding-right: 11px !important; } .brand-text span { display: none; } }
 @media (min-width: 1381px) { nav.tabs button { padding-left: 12px !important; padding-right: 12px !important; } }
 @media (min-width: 1381px) { .brand-text span { display: none; } }
+.sc-msg.bot p.sc-formula { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; background: rgba(var(--fg), .05); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin: 4px 0 8px; overflow-x: auto; }
+
+/* upload guide */
+.up-guide .ug-item{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:rgba(var(--fg),.025)}
+.up-guide .ug-tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--gold-text,var(--gold));font-weight:700}
+.up-guide h3{margin:4px 0 6px;font-size:15px}
+.up-guide p,.up-guide li{font-size:13px;line-height:1.55;color:var(--ink-2)}
+.up-guide p b,.up-guide li b{color:var(--ink)}
+.up-guide ol{margin:6px 0 12px;padding-left:18px}
+.up-guide .ug-foot{margin-top:12px;font-size:12px;color:var(--muted);line-height:1.5}
+.ips-sum.warn { color: var(--gold-text); background: rgba(255,198,41,.14); }

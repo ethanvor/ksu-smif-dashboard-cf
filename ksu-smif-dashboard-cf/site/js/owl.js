@@ -1,5 +1,5 @@
 // Easter egg: a little 8-bit owl that flies a few laps around the screen.
-// Triggers: click the KSU logo 3 times, type "owls" or "hoot", or (once a day) on its own ~40 s into a visit.
+// Trigger: click the KSU logo in the header 3 times quickly.
 const K = '#1a1714', G = '#FFC629', D = '#c99200', W = '#ffffff', O = '#e8781f', E = '#1a1714';
 const PAL = { K, G, D, W, O, E };
 // 16×12 pixel maps, two wing positions
@@ -75,21 +75,12 @@ export function flyOwl(laps = 3) {
   });
 }
 
-// --- triggers ---
+// --- trigger: ONLY three quick clicks/taps on the KSU logo image (not the "KSU SMIF" text) ---
+// Nothing else starts it: no timers, no typed words, no first-visit flight.
+try { Object.keys(localStorage).filter((k) => /owl/i.test(k)).forEach((k) => localStorage.removeItem(k)); } catch {}
 let clicks = [];
-document.querySelector('.brand')?.addEventListener('click', () => {
-  const now = Date.now(); clicks = clicks.filter((t) => now - t < 1500); clicks.push(now);
-  if (clicks.length >= 3) { clicks = []; flyOwl(); }
+document.querySelector('.brand-mark')?.addEventListener('click', (e) => {
+  if (!e.isTrusted) return; // real clicks only
+  const now = Date.now(); clicks = clicks.filter((t) => now - t < 2000); clicks.push(now);
+  if (clicks.length >= 3) { clicks = []; document.querySelectorAll('.pix-owl').forEach((o) => o.remove()); flying = false; flyOwl(); }
 });
-let typed = '';
-document.addEventListener('keydown', (e) => {
-  if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
-  typed = (typed + (e.key || '').toLowerCase()).slice(-6);
-  if (/owls$|hoot$/.test(typed)) { typed = ''; flyOwl(); }
-});
-try {
-  const today = new Date().toISOString().slice(0, 10);
-  if (localStorage.getItem('smif.owlDay') !== today) {
-    setTimeout(() => { if (document.visibilityState === 'visible') { localStorage.setItem('smif.owlDay', today); flyOwl(2); } }, 40000);
-  }
-} catch { /* private mode: no daily flight */ }

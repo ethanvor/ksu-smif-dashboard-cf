@@ -523,7 +523,7 @@ function drawPerf(fresh) {
     tooltip,
     legend: gapView ? { show: false } : { top: 0, right: 0, textStyle: { color: C.ink2 }, icon: 'roundRect', itemWidth: 12, itemHeight: 3 },
     xAxis: { type: 'category', data: bt.dates, ...axisCommon, splitLine: { show: false },
-      axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (long ? v.slice(0, 7) : short ? v.slice(5) : v.slice(2, 7)) } },
+      axisLabel: { ...axisCommon.axisLabel, formatter: (v) => axisDate(v, long ? 'long' : short ? 'short' : 'mid') } },
     yAxis: { type: 'value', scale: true, ...axisCommon, axisLabel: pctAxis },
     dataZoom: [
       { type: 'slider', xAxisIndex: 0, startValue: s, endValue: e, height: 20, bottom: 6, left: isMobile() ? 16 : 92, right: isMobile() ? 16 : 92, showDetail: !isMobile(), brushSelect: false, borderColor: C.line, backgroundColor: C.wash,
@@ -867,7 +867,7 @@ function renderRisk() {
     grid: { left: 50, right: 20, top: 30, bottom: 30 },
     legend: { top: 0, right: 0, textStyle: { color: C.ink2 }, icon: 'roundRect', itemWidth: 12, itemHeight: 3 },
     tooltip: { ...tooltipBase, trigger: 'axis', valueFormatter: (v) => fmt.pct(v) },
-    xAxis: { type: 'category', data: ps.series.dates, ...axisCommon, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => v.slice(5) } },
+    xAxis: { type: 'category', data: ps.series.dates, ...axisCommon, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => axisDate(v, 'short') } },
     yAxis: { type: 'value', max: 0, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => fmt.pct(v, 0) } },
     series: [
       { name: 'SMIF', type: 'line', data: ps.dd, showSymbol: false, lineStyle: { color: C.gold, width: 2 }, itemStyle: { color: C.gold }, areaStyle: { color: 'rgba(255,198,41,0.15)' } },
@@ -946,6 +946,14 @@ function renderHoldings() {
 }
 
 // ---------- fund trading history (from the Schwab transaction export) ----------
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// chart axis dates, month first: "Mar 2024" (long ranges), "Mar '24" (1–3 years), "Mar 15" (short ranges)
+const axisDate = (v, mode) => {
+  const [y, m, d] = String(v).slice(0, 10).split('-');
+  if (!m) return v;
+  const mo = MON[+m - 1];
+  return mode === 'long' ? `${mo} ${y}` : mode === 'short' ? `${mo} ${+d}` : `${mo} '${y.slice(2)}`;
+};
 const fdate = (d) => (d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'today');
 const yearsBetween = (a, b) => ((b ? new Date(b) : new Date()) - new Date(a)) / (365.25 * 86400000);
 const heldFor = (a, b) => { const y = yearsBetween(a, b); return y >= 1 ? `${y.toFixed(1)} yrs` : `${Math.max(1, Math.round(y * 12))} mo`; };
@@ -1239,8 +1247,10 @@ function ipsHTML() {
   const fails = checks.filter((c) => c.status === 'fail');
   const elig = checks.filter((c) => c.group === 'Eligibility');
   const passE = elig.filter((c) => c.status === 'pass').length, pend = elig.some((c) => c.status === 'pending');
+  const outside = elig.some((c) => c.status === 'warn');
   const sum = fails.length ? `<span class="ips-sum bad">✗ ${fails.length} issue${fails.length > 1 ? 's' : ''}: ${esc(fails.map((f) => f.label).join(', '))}</span>`
-    : pend ? `<span class="ips-sum info">${passE} of ${elig.length} eligibility checks pass so far</span>` : `<span class="ips-sum ok">✓ Meets all ${elig.length} eligibility rules</span>`;
+    : pend ? `<span class="ips-sum info">${passE} of ${elig.length} eligibility checks pass so far</span>`
+    : outside ? `<span class="ips-sum warn">! Eligible — outside the S&amp;P 500</span>` : `<span class="ips-sum ok">✓ Meets all ${elig.length} eligibility rules</span>`;
   const icon = { pass: '<i class="ips-i pass">✓</i>', fail: '<i class="ips-i fail">✗</i>', warn: '<i class="ips-i warn">!</i>', info: '<i class="ips-i info">•</i>', pending: '<i class="ips-i pend">…</i>' };
   const groups = [...new Set(checks.map((c) => c.group))];
   return `<div class="ips-head"><b>Investment Policy check</b>${tip('Only the IPS rules that apply to this one stock. Portfolio-wide rules (portfolio beta 0.9–1.1, sector weights within ±2% per trade, 75% US and 75% large-cap totals) are checked when you add a trade below.')}${sum}</div>
@@ -1313,7 +1323,7 @@ async function drawStockChart() {
   const px = (m.rawCloses || m.closes).slice(i0); // price as quoted (split-adjusted)
   const tr = m.closes.slice(i0); // adjusted for dividends → total return
   const short = r === '1M' || r === '3M';
-  const xAxis = { type: 'category', data: dates, ...axisCommon, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => (long ? v.slice(0, 7) : short ? v.slice(5) : v.slice(2, 7)) } };
+  const xAxis = { type: 'category', data: dates, ...axisCommon, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, formatter: (v) => axisDate(v, long ? 'long' : short ? 'short' : 'mid') } };
   const trades = (S.hist?.tickers?.[sym]?.trades || []).filter((t) => (t.type === 'Buy' || t.type === 'Sell') && t.date >= dates[0]);
   const ret = (a) => a[a.length - 1] / a[0] - 1;
   if (cmp) {
@@ -1526,7 +1536,7 @@ function renderImpact() {
     if (!r || r.assetClass !== 'Equity') return;
     const L = sizeLimits(spxW[t]);
     const isNew = !beforeW[t];
-    if (spxW[t] == null && (isNew || (r.weight > (beforeW[t] || 0)))) warns.push({ level: 'bad', text: `${t} isn't in the S&P 500. IPS: only S&P 500 companies are investable.` });
+    if (spxW[t] == null && (isNew || (r.weight > (beforeW[t] || 0)))) warns.push({ level: 'warn', text: `${t} is not an S&P 500 constituent. Under the IPS it may still be purchased at the committee's discretion if it meets the beta (≤ 2), market-cap (> $2B) and developed-exchange criteria — see its Investment Policy check.` });
     if (isNew && r.weight < L.minInit - 1e-9) warns.push({ level: 'warn', text: `${t} would start at ${fmt.pct(r.weight, 2)} of the fund. IPS minimum first purchase is 1% (≈ ${fmt.usd(L.minInit * after.total)}).` });
     if (isNew && r.weight > L.maxInit + 1e-9) warns.push({ level: 'warn', text: `${t} would start at ${fmt.pct(r.weight, 2)}. IPS maximum first purchase for this stock is ${fmt.pct(L.maxInit, 1)} (≈ ${fmt.usd(L.maxInit * after.total)}).` });
     if (L.maxHold != null && r.weight > L.maxHold + 1e-9) warns.push({ level: 'warn', text: `${t} would be ${fmt.pct(r.weight, 2)} of the fund. IPS: a stock under 2% of the S&P 500 can't be more than 5%.` });
@@ -1783,7 +1793,7 @@ function parsePositionsSheet(wb) {
   // SMIF workbook: two "GICS Industry" columns — first is the sector, second the industry
   const g1 = hdr.indexOf('gicsindustry'), g2 = hdr.lastIndexOf('gicsindustry');
   if (C.sector < 0 && g1 >= 0) C.sector = g1;
-  C.industry = g2 > g1 ? g2 : hdr.indexOf('industry');
+  C.industry = g2 > g1 ? g2 : g1 >= 0 && g1 !== C.sector ? g1 : hdr.indexOf('industry');
   if (C.name < 0) C.name = 0;
   const warnings = [];
   const found = [`Sheet "${sheetName}"`];
@@ -1908,6 +1918,55 @@ async function publishHistory(hist, setCash) {
   } catch (e) { toast('Publish failed: ' + e.message, 5000); }
 }
 
+// ---------- the current master in the upload-template layout (edit and upload it back) ----------
+function downloadPositions() {
+  const p = S.base;
+  const H = ['Name', 'Ticker', 'Quantity', 'Previous Close', 'Current Price', 'Purchase Price', 'Cost Basis', 'Current Value', 'GICS Sector', 'GICS Industry', 'Purchase Date'];
+  const rows = [H];
+  const px = (h) => +(h.price ?? h.prevClose ?? h.avgCost ?? 0);
+  const line = (h) => {
+    const r = rows.length + 1, mm = h.assetClass === 'Money Market';
+    const q = +h.quantity, cur = mm ? 1 : px(h), cost = mm ? 1 : +(+h.avgCost).toFixed(4);
+    rows.push([h.name, h.ticker, q, mm ? 1 : +(h.prevClose ?? cur), cur, cost,
+      { t: 'n', f: `C${r}*F${r}`, v: q * cost }, { t: 'n', f: `C${r}*E${r}`, v: q * cur }, h.assetClass === 'Equity' ? h.sector || '' : '', h.assetClass === 'Equity' ? h.industry || '' : '', h.purchaseDate || '']);
+  };
+  const block = (ac, label) => {
+    const a = rows.length + 1;
+    p.holdings.filter((h) => h.assetClass === ac).sort((x, y) => x.ticker.localeCompare(y.ticker)).forEach(line);
+    const b = rows.length;
+    const tot = rows.slice(a - 1, b).reduce((t, r) => t + r[7].v, 0);
+    rows.push([label, '', '', '', '', '', '', b >= a ? { t: 'n', f: `SUM(H${a}:H${b})`, v: tot } : 0]);
+    return rows.length;
+  };
+  const eqR = block('Equity', 'Equity'), fiR = block('Fixed Income', 'Fixed Income');
+  const mmA = rows.length + 1;
+  p.holdings.filter((h) => h.assetClass !== 'Equity' && h.assetClass !== 'Fixed Income').forEach(line);
+  const mmB = rows.length;
+  rows.push(['Cash', '', '', '', '', '', '', +(+p.cash || 0).toFixed(2)]);
+  const cashR = rows.length;
+  const val = (i) => { const c = rows[i - 1][7]; return typeof c === 'object' ? c.v : +c || 0; };
+  let grand = val(eqR) + val(fiR) + val(cashR); for (let i = mmA; i <= mmB; i++) grand += val(i);
+  rows.push(['', '', '', '', '', '', 'Total', { t: 'n', f: `H${eqR}+H${fiR}${mmB >= mmA ? `+SUM(H${mmA}:H${mmB})` : ''}+H${cashR}`, v: grand }]);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [34, 10, 11, 14, 14, 15, 14, 15, 26, 40, 14].map((wch) => ({ wch }));
+  const ins = XLSX.utils.aoa_to_sheet([
+    ['SMIF positions — ' + (p.meta?.asOf || new Date().toISOString().slice(0, 10))],
+    [''],
+    ['This is the current master copy in the upload layout. To record trades:'],
+    ['1. On the Portfolio tab, change the share counts (Quantity) and Purchase Price for anything bought or sold.'],
+    ['2. New stock: insert a row above the "Equity" row. New bond ETF: above "Fixed Income". Money-market fund: below "Fixed Income".'],
+    ['3. Sold out completely: delete the row (or set Quantity to 0).'],
+    ['4. Update the Cash row (Current Value column) to the uninvested cash from Schwab.'],
+    ['5. Save and drop it on Master Copy → Upload a workbook. A pop-up lists every change before anything is published.'],
+    [''],
+    ['Required columns: Ticker, Quantity. Keep the "Equity" and "Fixed Income" subtotal rows and the "Cash" row — they tell the site which section each row is in.'],
+  ]);
+  ins['!cols'] = [{ wch: 120 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Portfolio');
+  XLSX.utils.book_append_sheet(wb, ins, 'Instructions');
+  XLSX.writeFile(wb, `SMIF_Positions_${p.meta?.asOf || 'current'}.xlsx`);
+}
 async function handleFile(f) {
   try {
     let parsed;
@@ -1916,8 +1975,12 @@ async function handleFile(f) {
       parsed = { cash: j.cash, holdings: j.holdings, meta: j.meta };
     } else {
       const wb = XLSX.read(await f.arrayBuffer(), { cellDates: true });
-      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
-      if (aoa.length && looksLikeTransactions(aoa[0])) return handleTxHistory(aoa, f.name);
+      // a Schwab transaction export can be on any tab, with a title line or two above the headers
+      for (const n of wb.SheetNames) {
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true });
+        const hi = aoa.slice(0, 6).findIndex((r) => looksLikeTransactions(r || []));
+        if (hi >= 0) return handleTxHistory(aoa.slice(hi), f.name);
+      }
       parsed = parseWorkbook(XLSX.read(await f.arrayBuffer(), { cellDates: false }));
     }
     if (!parsed.holdings?.length) throw new Error('No holdings found');
@@ -1988,6 +2051,10 @@ function openTradeReview(next, fname, parsed = {}) {
   ];
   const warn = [...(parsed.warnings || [])];
   if (D.cashTo < 0) warn.push('Cash is negative in the uploaded file.');
+  const goneN = D.rows.filter((r) => r.action === 'Sold out').length;
+  if (D.before.rows.length >= 6 && goneN >= D.before.rows.length / 2) warn.unshift(`This file would sell out ${goneN} of ${D.before.rows.length} holdings. If you didn't mean that, it's probably the wrong file (e.g. the blank template with example rows) — press Cancel.`);
+  const tickers = new Set(next.holdings.map((h) => h.ticker));
+  if (['AAPL', 'JPM', 'XOM', 'LQD', 'SNOXX'].every((t) => tickers.has(t)) && next.holdings.length === 5 && Math.abs(+next.cash - 4461.46) < 0.01) warn.unshift('These look like the template\'s example rows. Replace them with the fund\'s real holdings before publishing.');
   const b = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div style="min-width:0"><h2>Review proposed trades</h2>
       <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">${esc(fname)} vs the current master${since ? ` (as of ${fdate(since)})` : ''} · ${esc((parsed.found || []).join(' · '))}</div></div><button class="btn sm" id="trClose">✕</button></div>
     <div class="tr-sum">
@@ -2134,6 +2201,8 @@ $('#commitScenario').addEventListener('click', commitScenario);
 
 // data room wiring
 $('#dlMaster').addEventListener('click', downloadMaster);
+$('#dlPositions').addEventListener('click', downloadPositions);
+$('#dlPositions2').addEventListener('click', downloadPositions);
 $('#dlJson').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(cleanPortfolio(S.base), null, 1)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `SMIF_Master_${new Date().toISOString().slice(0, 10)}.json`; a.click();
@@ -2447,7 +2516,9 @@ function scrappyMd(t) {
     const li = ln.match(/^\s*(?:[-•*]|\d+[.)])\s+(.*)$/);
     if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
     if (inList) { html += '</ul>'; inList = false; }
-    html += ln.trim() ? `<p>${ln}</p>` : '';
+    // a line that is just a formula ("P/E = price ÷ EPS") gets a neat formula box
+    const formula = /^[^.!?]{3,90}=[^.!?]{1,90}$/.test(ln.trim()) && /[÷×=]/.test(ln) && !/^<b>/.test(ln.trim());
+    html += ln.trim() ? (formula ? `<p class="sc-formula">${ln.trim()}</p>` : `<p>${ln}</p>`) : '';
   }
   return html + (inList ? '</ul>' : '');
 }

@@ -80,4 +80,23 @@ Things that work differently on Cloudflare:
 - The "Price data check" card on the Performance tab lists where every price history came from.
 
 ## Easter egg
-A little 8-bit owl (`site/js/owl.js`) flies a few laps around the screen: click the KSU logo in the header 3 times, or type `owls` or `hoot` anywhere outside a text box. It also flies by on its own once a day, about 40 seconds into a visit. Click it while it flies for a hoot. It never appears for people who have reduced motion turned on.
+A little 8-bit owl (`site/js/owl.js`) flies a few laps around the screen: click the KSU logo in the header 3 times quickly. Click it while it flies for a hoot. It never appears for people who have reduced motion turned on.
+
+
+## Handing over to the next managers — what to upload
+
+Everything lives on **Master Copy** ("What can I upload?" card). Nothing is published until an officer reviews it and enters the passcode; every published version can be restored from Version history.
+
+**1. After a trade — positions workbook**
+- Easiest: Master Copy → **⬇ Current positions (upload format)**. It downloads today's holdings already filled in. Change the share counts / purchase price / cash, save, and drop it back in the upload box.
+- Starting fresh: `site/templates/SMIF_Positions_Template.xlsx` (also linked on the page). Instructions are on its first tab.
+- Required columns: **Ticker, Quantity**. Also read if present: Name, Current Price, Previous Close, Purchase Price (or Cost Basis), GICS Sector, GICS Industry, Purchase Date. Common alternative names work (Symbol, Shares, Avg Cost, Market Value).
+- Layout: stocks, then an **Equity** subtotal row; bond ETFs, then a **Fixed Income** subtotal row; then the money-market fund and a **Cash** row (amount in Current Value). The old SMIF workbook layout still works as-is.
+- The review pop-up lists every trade (old → new shares), checks the subtotals and cash, and warns if the file looks like the template's example rows or would sell out most of the fund.
+
+**2. For history & performance — Schwab transaction history**
+- Schwab → fund account → History → all transaction types, widest date range → Export (Excel or CSV). Upload it unchanged.
+- Required columns (Schwab includes them): Trade Date, Activity, Symbol, Quantity, Amount (+ Description, Notes). Format sample: `site/templates/Schwab_Transactions_Sample.xlsx`.
+- It reconciles share counts, first-bought dates and cash against the positions, then **Publish history for everyone**.
+
+Order after a trade: positions first, then the transaction history.

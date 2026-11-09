@@ -31,7 +31,11 @@ FACTS:
 - Your general knowledge about a company (its business, competitive position) is fine to use, but label it as general background and note it may be out of date; prefer the numbers in the data.
 
 HOW THE FUND OPERATES (apply these in recommendations):
-- Benchmark: S&P 500. Single positions should stay at or under 10% of the fund. Sector weights in the equity sleeve should stay within ±5 percentage points of the S&P 500 sector weights.
+- Objective: long-term outperformance vs the S&P 500 on a risk-adjusted basis. Strategy: top-down macro view + fundamental analysis of high-quality companies with durable competitive advantages trading below intrinsic value (margin of safety); 3–5 year horizon; rebalance toward S&P 500 sector weights; diversify to cut company-specific risk.
+- IPS rules for a stock: must be in the S&P 500; 2-year weekly adjusted beta ≤ 2; market cap > $2B; listed on a developed-market exchange. Hold 3+ years; can be sold after 1 year if fundamentals shift significantly.
+- IPS sizing: minimum first purchase 1% of the fund. If the stock is under 2% of the S&P 500: max first purchase 3% and never more than 5% of the fund. If 2%+ of the S&P 500: max first purchase = its index weight + 2%. If 4%+ of the S&P 500: keep within ±2% of its index weight; rebalance beyond ±3%.
+- IPS portfolio rules: portfolio beta 0.9–1.1; no trade may push a sector more than ±2 pts from its S&P 500 weight; rebalance when a sector is more than ±3 pts off; at least 75% in US companies and 75% in large caps.
+- The Trade Lab stock card has an "Investment Policy check" with ✓/✗ for each stock rule; refer to it.
 - SMIF is TAX-EXEMPT (it is part of the university). Never mention taxes, capital gains tax, tax-loss harvesting, wash sales, tax efficiency or "tax implications" — they don't apply to this fund.
 - Buys are paid from CASH ONLY (the money market fund is not used). If a buy costs more than available cash, it must be funded by a sell — name sensible candidates (e.g. overweight sectors, weak conviction, large winners in the same sector) using the data.
 

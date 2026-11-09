@@ -1,5 +1,6 @@
 // KSU SMIF Dashboard — app shell, data loading, views.
 import { gicsFor, fullIndustry } from './gics.js';
+import { IPS, stockChecks, weeklyAdjBeta, sizeLimits } from './ips.js';
 import {
   computePortfolio, symbolStats, portfolioStats, windowBacktest, windowAsHeld, actualBacktest, applyTrades, periodReturns, weightedBeta,
   fmt, cls, toGics, SECTORS, CASH_LIKE, sleeveSeries, viewWeeks, calendarYears, trailingPeriods, assetClassOf, verifyPrices,
@@ -32,7 +33,7 @@ const S = {
   rf: store.get('rf', null),
   rfAutoSaved: store.get('rfAuto', null),
   rfAuto: null,
-  settings: { name: '', ...store.get('settings', {}), maxPos: 10, band: 5 }, // trade guidelines: 10% max position, ±5 pts sector band
+  settings: { name: '', ...store.get('settings', {}), maxPos: 5, band: 3 }, // IPS: sectors rebalanced beyond ±3 pts; trades may not push a sector past ±2 pts
   view: 'overview',
   tmColor: 'ret', secBasis: 'equity', perfMode: 'ret', perfRange: store.get('perfRange', '1Y'), perfView: store.get('perfView', 'ret'), perfFrom: null, perfTo: null, perfWin: null, perfBasis: 'held', // actual results from the transaction history
   showTrades: store.get('showTrades', false),
@@ -680,7 +681,7 @@ function renderAllocation() {
     yAxis: { type: 'category', data: d.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLabel: { color: C.ink2 } },
     series: [{ type: 'bar', barWidth: '55%', data: d.map((x) => ({ value: x.diff, itemStyle: { color: x.diff >= 0 ? C.gold : C.blue, borderRadius: x.diff >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4], opacity: Math.abs(x.diff) > band ? 1 : 0.65 } })),
       label: { show: true, position: 'right', color: C.ink2, formatter: (p) => fmt.pts(p.value) },
-      markLine: { silent: true, symbol: 'none', lineStyle: { color: C.muted, type: 'dashed' }, label: { color: C.muted, formatter: `±${S.settings.band} pts` }, data: [{ xAxis: band }, { xAxis: -band }] } }],
+      markLine: { silent: true, symbol: 'none', lineStyle: { color: C.muted, type: 'dashed' }, label: { color: C.muted, formatter: `±${S.settings.band} pts (IPS rebalance)` }, data: [{ xAxis: band }, { xAxis: -band }] } }],
   });
 
   // weights table grouped by sector
@@ -690,7 +691,7 @@ function renderAllocation() {
   S.openSectors = S.openSectors || new Set();
   const th = (label, t) => `<th class="n" style="cursor:default">${label} ${tip(t)}</th>`;
   let html = `<thead><tr><th style="cursor:default">Sector / holding</th><th class="n" style="cursor:default">Value</th>${
-    th('Weight (total)', 'Share of the WHOLE fund — stocks, bonds, money market and cash all included. Use this for position size (the 10% limit) and risk.')}${
+    th('Weight (total)', 'Share of the WHOLE fund — stocks, bonds, money market and cash all included. Use this for position size (the IPS limits) and risk.')}${
     th('Weight in equities', 'Share of the STOCK portion only — cash, bonds and money market are left out. Use this to compare with the S&P 500, which is 100% stocks.')}${
     th('S&amp;P 500 weight', 'How much of the S&P 500 index this sector or stock makes up. Compare it with "Weight in equities" to see if we are over- or underweight.')}</tr></thead><tbody>`;
   groups.forEach(([s, rs], gi) => {
@@ -1172,6 +1173,8 @@ function renderStockCard(err) {
   if (st) {
     h += `<div class="range52-wrap" style="margin:14px 0 4px"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span>52-wk low ${fmt.usdC(st.low52)}</span><span>52-week range ${tip(GLOSS.r52)}</span><span>high ${fmt.usdC(st.high52)}</span></div><div class="range52"><i style="left:${(pos52 ?? 0) * 100}%"></i></div></div>`;
   }
+  if (s.assetClass === 'Equity') h += `<div class="ips-box" id="ipsBox">${ipsHTML()}</div>`;
+  else h += `<div class="ips-box"><div class="ips-head"><b>Investment Policy check</b><span class="ips-sum info">The IPS stock criteria apply to equities</span></div></div>`;
   h += `<h3 class="mt">Risk &amp; return (1 year, vs S&amp;P 500)</h3><div class="metrics">
     ${metric('Beta', fmt.x(st?.beta), p.beta != null ? `Yahoo (5y monthly): ${fmt.x(p.beta)}` : 'Daily, 1 year', GLOSS.beta)}
     ${metric('Volatility', fmt.pct(st?.vol), st ? `S&P: ${fmt.pct(S.stats.SPY?.vol)}` : '', GLOSS.vol)}
@@ -1214,6 +1217,34 @@ function renderStockCard(err) {
   $('#stockCard').innerHTML = h;
   bindStockChart();
   drawStockChart();
+  if (s.assetClass === 'Equity') loadIpsBeta(s.symbol);
+}
+// ---------- IPS checklist (stock-level rules only) ----------
+async function loadIpsBeta(sym) {
+  const s = S.stock;
+  if (s.ipsBeta !== undefined) return;
+  if (!S.api) { s.ipsBeta = null; refreshIps(); return; }
+  S.wk2 = S.wk2 || {};
+  try { await fetchSeries([sym, 'SPY'].filter((t) => !S.wk2[t]), '2y', '1wk', S.wk2); } catch { /* handled below */ }
+  if (S.stock?.symbol !== sym) return;
+  s.ipsBeta = weeklyAdjBeta(S.wk2[sym], S.wk2.SPY);
+  refreshIps();
+}
+function refreshIps() { const el = $('#ipsBox'); if (el) el.innerHTML = ipsHTML(); }
+function ipsHTML() {
+  const s = S.stock;
+  const row = calc.rows.find((r) => r.ticker === s.symbol);
+  const firstBuy = s.held ? (S.hist?.tickers?.[s.symbol]?.periods?.slice(-1)[0]?.from || s.held.purchaseDate) : null;
+  const checks = stockChecks({ spx: s.spx, prof: s.prof, m: s.m, held: !!row, firstBuy, beta: s.ipsBeta, weightNow: row?.weight, total: calc.total, price: s.price });
+  const fails = checks.filter((c) => c.status === 'fail');
+  const elig = checks.filter((c) => c.group === 'Eligibility');
+  const passE = elig.filter((c) => c.status === 'pass').length, pend = elig.some((c) => c.status === 'pending');
+  const sum = fails.length ? `<span class="ips-sum bad">✗ ${fails.length} issue${fails.length > 1 ? 's' : ''}: ${esc(fails.map((f) => f.label).join(', '))}</span>`
+    : pend ? `<span class="ips-sum info">${passE} of ${elig.length} eligibility checks pass so far</span>` : `<span class="ips-sum ok">✓ Meets all ${elig.length} eligibility rules</span>`;
+  const icon = { pass: '<i class="ips-i pass">✓</i>', fail: '<i class="ips-i fail">✗</i>', warn: '<i class="ips-i warn">!</i>', info: '<i class="ips-i info">•</i>', pending: '<i class="ips-i pend">…</i>' };
+  const groups = [...new Set(checks.map((c) => c.group))];
+  return `<div class="ips-head"><b>Investment Policy check</b>${tip('Only the IPS rules that apply to this one stock. Portfolio-wide rules (portfolio beta 0.9–1.1, sector weights within ±2% per trade, 75% US and 75% large-cap totals) are checked when you add a trade below.')}${sum}</div>
+    <div class="ips-grid">${groups.map((g) => `<div class="ips-group"><div class="ips-g">${g}</div>${checks.filter((c) => c.group === g).map((c) => `<div class="ips-row ${c.status}">${icon[c.status]}<div><span class="ips-l">${esc(c.label)}${c.tip ? ' ' + tip(c.tip) : ''}</span><span class="ips-d">${esc(c.detail)}</span></div></div>`).join('')}</div>`).join('')}</div>`;
 }
 // ---------- stock card: GICS line, price history with time frames, and compare ----------
 function gicsLine(s) {
@@ -1487,13 +1518,29 @@ function renderImpact() {
   } else h += `<div class="warn-box" style="margin-top:10px">Beta, volatility and Sharpe before/after appear once live data is connected.</div>`;
   // guideline checks
   const warns = [...sim.notes];
-  const maxPos = S.settings.maxPos / 100, band = S.settings.band / 100;
-  after.rows.filter((r) => r.assetClass === 'Equity' && r.weight > maxPos && tickers.includes(r.ticker)).forEach((r) => warns.push({ level: 'warn', text: `${r.ticker} would be ${fmt.pct(r.weight, 1)} of the fund — above the ${S.settings.maxPos}% single-position limit.` }));
-  secsT.forEach((s) => {
-    const d = (after.sectors[s]?.wEq || 0) - bw[s];
-    if (Math.abs(d) > band) warns.push({ level: 'warn', text: `${s} would be ${fmt.pts(d)} vs the S&P 500 — outside the ±${S.settings.band} pt band.` });
+  // IPS checks on the trade: size limits per stock, S&P inclusion, sector moves of more than ±2 pts, portfolio beta 0.9–1.1
+  const spxW = Object.fromEntries((S.base.spxConstituents || []).map((x) => [x.ticker, x.weight]));
+  const beforeW = Object.fromEntries(before.rows.map((r) => [r.ticker, r.weight]));
+  tickers.forEach((t) => {
+    const r = after.rows.find((x) => x.ticker === t);
+    if (!r || r.assetClass !== 'Equity') return;
+    const L = sizeLimits(spxW[t]);
+    const isNew = !beforeW[t];
+    if (spxW[t] == null && (isNew || (r.weight > (beforeW[t] || 0)))) warns.push({ level: 'bad', text: `${t} isn't in the S&P 500. IPS: only S&P 500 companies are investable.` });
+    if (isNew && r.weight < L.minInit - 1e-9) warns.push({ level: 'warn', text: `${t} would start at ${fmt.pct(r.weight, 2)} of the fund. IPS minimum first purchase is 1% (≈ ${fmt.usd(L.minInit * after.total)}).` });
+    if (isNew && r.weight > L.maxInit + 1e-9) warns.push({ level: 'warn', text: `${t} would start at ${fmt.pct(r.weight, 2)}. IPS maximum first purchase for this stock is ${fmt.pct(L.maxInit, 1)} (≈ ${fmt.usd(L.maxInit * after.total)}).` });
+    if (L.maxHold != null && r.weight > L.maxHold + 1e-9) warns.push({ level: 'warn', text: `${t} would be ${fmt.pct(r.weight, 2)} of the fund. IPS: a stock under 2% of the S&P 500 can't be more than 5%.` });
+    if (L.track && (r.weight < L.track.lo || r.weight > L.track.hi)) warns.push({ level: 'warn', text: `${t} would be ${fmt.pct(r.weight, 2)} vs its ${fmt.pct(L.benchW, 2)} index weight. IPS: keep stocks that are 4%+ of the index within ±2% (${fmt.pct(Math.max(0, L.track.lo), 1)}–${fmt.pct(L.track.hi, 1)}).` });
   });
-  h += warns.length ? warns.map((w) => `<div class="warn-box ${w.level === 'bad' ? 'bad' : ''}">⚠ ${esc(w.text)}</div>`).join('') : `<div class="warn-box ok">✓ Within the position (${S.settings.maxPos}%) and sector (±${S.settings.band} pts) guidelines.</div>`;
+  secsT.forEach((sec) => {
+    const d0 = (before.sectors[sec]?.wEq || 0) - bw[sec], d1 = (after.sectors[sec]?.wEq || 0) - bw[sec];
+    if (Math.abs(d1) > IPS.sectorTrade && Math.abs(d1) > Math.abs(d0) + 1e-9) warns.push({ level: 'warn', text: `${sec} would be ${fmt.pts(d1)} vs the S&P 500. IPS: no trade should push a sector more than ±2 pts from the benchmark.` });
+  });
+  if (S.live) {
+    const pbA = weightedBeta(after, betas), pbB = weightedBeta(before, betas);
+    if (pbA != null && (pbA < IPS.portBeta[0] || pbA > IPS.portBeta[1]) && Math.abs(pbA - 1) > Math.abs((pbB ?? 1) - 1)) warns.push({ level: 'warn', text: `Portfolio beta would be ${fmt.x(pbA)}. IPS: keep it between 0.9 and 1.1.` });
+  }
+  h += warns.length ? warns.map((w) => `<div class="warn-box ${w.level === 'bad' ? 'bad' : ''}">⚠ ${esc(w.text)}</div>`).join('') : `<div class="warn-box ok">✓ Meets the IPS position-size, sector (±2 pts per trade) and portfolio beta (0.9–1.1) rules.</div>`;
   el.innerHTML = h;
 }
 
@@ -2347,7 +2394,7 @@ async function scrappyStockFacts(t) {
 function relWords(ours, bench) {
   if (bench == null) return `${fmt.pct(ours)} of our equities (no S&P weight available)`;
   const d = ours - bench, pts = Math.abs(d * 100).toFixed(1);
-  const band = Math.abs(d) <= 0.05 ? 'inside the ±5 pt band' : 'OUTSIDE the ±5 pt band';
+  const band = Math.abs(d) <= 0.02 ? 'inside the IPS ±2 pt trade limit' : Math.abs(d) <= 0.03 ? 'past the ±2 pt trade limit but inside the ±3 pt rebalance trigger' : 'OUTSIDE the ±3 pt IPS rebalance trigger (rebalance needed)';
   if (Math.abs(d) < 0.005) return `in line with the S&P 500 (ours ${fmt.pct(ours)} vs S&P ${fmt.pct(bench)}), ${band}`;
   return `${d < 0 ? 'UNDERWEIGHT' : 'OVERWEIGHT'} by ${pts} pts vs the S&P 500 (ours ${fmt.pct(ours)} is ${d < 0 ? 'BELOW' : 'ABOVE'} the S&P's ${fmt.pct(bench)}), ${band}`;
 }
@@ -2361,7 +2408,7 @@ async function scrappyContext(q) {
   const c = calc, bw = S.base.benchmark.sectorWeights;
   const L = [];
   L.push(`# SMIF fund snapshot (holdings as of ${S.base.meta?.asOf || '?'}; prices ${S.live ? 'live, delayed' : 'from the workbook'})`);
-  L.push(`Total value ${fmt.usd(c.total)}. Cash ${fmt.usd(c.cash)} (${fmt.pct(c.cash / c.total, 2)}) — buys are paid from this cash only. Equities ${fmt.usd(c.eqValue)} (${fmt.pct(c.eqValue / c.total)}), fixed income ${fmt.usd(c.fiValue)}, money market ${fmt.usd(c.mmValue)}. ${c.rows.length} positions. Limits: max 10% per position; sectors within ±5 pts of S&P.`);
+  L.push(`Total value ${fmt.usd(c.total)}. Cash ${fmt.usd(c.cash)} (${fmt.pct(c.cash / c.total, 2)}) — buys are paid from this cash only. Equities ${fmt.usd(c.eqValue)} (${fmt.pct(c.eqValue / c.total)}), fixed income ${fmt.usd(c.fiValue)}, money market ${fmt.usd(c.mmValue)}. ${c.rows.length} positions. IPS limits: 1% minimum first purchase; stocks under 2% of the S&P 500 max 3% first purchase and 5% total; trades may not push a sector past ±2 pts, rebalance beyond ±3 pts; portfolio beta 0.9–1.1.`);
   if (S.pstats) {
     const betas = Object.fromEntries(Object.entries(S.stats).map(([k, v]) => [k, v?.beta]));
     L.push(`Portfolio risk (1Y daily, current holdings): beta ${fmt.x(weightedBeta(c, betas))}, volatility ${fmt.pct(S.pstats.vol)}, Sharpe ${fmt.x(S.pstats.sharpe)}, max drawdown ${fmt.pct(S.pstats.maxDD)}, 1Y return at current weights ${fmt.spct(S.pstats.totalRet)}; S&P 500 1Y ${fmt.spct(S.pstats.benchStats?.totalRet)}, S&P vol ${fmt.pct(S.pstats.benchStats?.vol)}.`);

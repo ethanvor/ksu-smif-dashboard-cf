@@ -148,7 +148,13 @@ function setChart(id, option, onClick) {
     o.grid = { ...o.grid, containLabel: true, left: m ? 10 : Math.min(o.grid.left ?? 10, 12), right: m ? Math.min(o.grid.right ?? 10, 40) : o.grid.right };
   }
   const fixAxis = (ax) => {
-    if (!ax || Array.isArray(ax)) return ax;
+    if (Array.isArray(ax)) return ax.map(fixAxis);
+    if (!ax) return ax;
+    // ECharts sizes the chart margins (containLabel) from each axis label's OWN font, which defaults to plain
+    // sans-serif — narrower than Montserrat, so long labels like "Communication Services" got clipped.
+    // Give every axis label and axis name the real font so the space reserved matches what's drawn.
+    ax.axisLabel = { fontFamily: baseText.fontFamily, ...ax.axisLabel };
+    ax.nameTextStyle = { fontFamily: baseText.fontFamily, ...ax.nameTextStyle };
     if (m && ax.name) ax.nameTextStyle = { ...ax.nameTextStyle, align: ax.nameLocation === 'middle' ? 'center' : 'left', fontSize: 10 };
     if (ax.type === 'category' && m) {
       const f0 = ax.axisLabel?.formatter;
@@ -157,6 +163,8 @@ function setChart(id, option, onClick) {
     return ax;
   };
   o.yAxis = fixAxis(o.yAxis); o.xAxis = fixAxis(o.xAxis);
+  // a y-axis title sits centred over the axis line by default and can poke out past the left edge
+  [].concat(o.yAxis || []).forEach((ax) => { if (ax?.name && (!ax.nameLocation || ax.nameLocation === 'end') && !ax.nameRotate) ax.nameTextStyle = { align: 'left', ...ax.nameTextStyle }; });
   if (m && o.legend && !o.legend.orient) o.legend = { ...o.legend, itemGap: 8, textStyle: { ...o.legend.textStyle, fontSize: 10 } };
   if (m && Array.isArray(o.series)) o.series.forEach((x) => { if (x.endLabel) x.endLabel = { ...x.endLabel, show: false }; });
   ch.setOption(o, true);
@@ -2456,6 +2464,15 @@ document.addEventListener('scroll', (e) => { if (e.target !== document && tipFor
   renderStatus();
   $('#scrChips').innerHTML = [...(S.base.watchlist || []), ...(S.base.focusList || [])].map((t) => `<button class="chip" data-t="${t}">${t}</button>`).join('') || '<span style="color:var(--muted);font-size:12px">—</span>';
   $$('#scrChips .chip').forEach((c) => c.addEventListener('click', () => analyze(c.dataset.t)));
+  // Charts measure their labels when they're drawn. If that happens before the Montserrat web font arrives,
+  // the labels are sized for the fallback font and get clipped (e.g. "ommunication Services"). So wait for it.
+  const fontsOk = () => document.fonts?.check?.('600 12px Montserrat');
+  try { await Promise.race([Promise.all(['400 11px Montserrat', '500 12px Montserrat', '600 12px Montserrat', '700 12px Montserrat'].map((f) => document.fonts.load(f))), new Promise((r) => setTimeout(r, 2500))]); } catch { /* old browser */ }
+  if (!fontsOk() && document.fonts) {
+    // font came late (slow network): redraw once it lands, under a new font name so cached label widths aren't reused
+    const late = () => { if (!fontsOk()) return; document.fonts.removeEventListener?.('loadingdone', late); baseText.fontFamily = 'Montserrat, sans-serif'; refreshAll(); };
+    document.fonts.addEventListener?.('loadingdone', late);
+  }
   show(location.hash.slice(1) || 'overview');
   renderTape();
   setTimeout(() => $('#splash').classList.add('done'), 350);

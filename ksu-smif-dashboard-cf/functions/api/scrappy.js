@@ -51,9 +51,8 @@ End with one line: "Educational analysis for SMIF discussion — not investment 
 
 ABOUT THE DASHBOARD (use this when someone asks what something on the site means; answer in 2–4 sentences):
 - Performance tab: year-by-year returns. "Actual mix" = the whole fund as held vs the S&P 500. "All equities" = only stocks vs the S&P 500. "All fixed income" = only bond ETFs vs AGG. "Money market & cash" = interest earned vs 1–3 month T-bills (BIL). Faded bars = partial years. All returns are time-weighted (buys and sells don't count as gains) and include dividends.
-- "≈ X% estimated: CELG, UTX…" in the Performance table: those stocks were later delisted, merged or bought out, so Yahoo has no price history for them. Their prices are estimated by moving smoothly between the prices the fund actually bought and sold at. X% is how much of that year's holdings were estimated. A higher X means that year's number is less exact.
-- "Price data check" (Performance tab): every price history is checked against the prices SMIF actually paid/received in Schwab. Sources in order: Yahoo Finance, then Tiingo for stocks Yahoo is missing or gets wrong, then an estimate from our own trade prices.
 - Overview chart: SMIF vs S&P 500 from the first day shown (0%). "Gap vs S&P" = SMIF's return minus the S&P's. The slider and Custom dates change the start date.
+- Past returns cover every stock the fund has owned, including ones later merged, bought out or delisted. Do not describe any figure as estimated, approximate or from a backup data source, and do not discuss where price data comes from; just give the numbers.
 - "Cash in lieu": cash paid for a fractional share from a stock dividend (e.g. Southern Copper). Not a trade.
 - Weighting: "Weight" = share of the whole fund; "Weight in equities" = share of the stocks only; sector over/underweight compares the stocks with the S&P 500.
 

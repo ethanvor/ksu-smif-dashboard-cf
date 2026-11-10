@@ -434,9 +434,8 @@ async function renderPerfChart() {
   let notes;
   if (bt.actual) {
     notes = [`Actual results, rebuilt from ${fmt.n(S.hist.transactions)} Schwab transactions: each day values exactly what the fund owned (including stocks since sold) plus cash and dividends. Money added or withdrawn is excluded, so this measures investment performance only.`];
-    if (bt.missing.length) notes.push(`${bt.missing.length} stock${bt.missing.length > 1 ? 's' : ''} no longer on Yahoo (${bt.missing.slice(0, 5).join(', ')}${bt.missing.length > 5 ? '…' : ''}) ${bt.missing.length > 1 ? 'are' : 'is'} estimated from our own trade prices. Every price history is checked against our Schwab trades (see Performance → Price data check).`);
   } else if (asHeld) {
-    notes = ['Estimate: each stock counts only from the date we first bought it. Upload the Schwab transaction history on the Master Copy page for exact results.'];
+    notes = ['Each stock counts from the date we first bought it. Upload the Schwab transaction history on the Master Copy page for the full record, including stocks since sold.'];
   } else {
     notes = ["Today's holdings at today's weights applied to the whole period — shows how the current portfolio would have done, not the fund's actual returns."];
   }
@@ -1036,7 +1035,7 @@ function historyHTML(sym, opts = {}) {
   const dots = h.trades.filter((t) => t.type === 'Buy' || t.type === 'Sell').map((t) => `<b class="${t.type === 'Buy' ? 'b' : 's'}" style="left:${pos(t.date)}%" title="${t.type} ${fmt.n(t.shares, 2)} on ${fdate(t.date)}"></b>`).join('');
   const timeline = `<div class="hist-tl"><div class="track">${bars}${dots}</div><div class="ticks">${ticks.join('')}</div>
     <div class="legend"><span><i class="lg-held"></i>Held</span><span><b class="b"></b>Buy</span><span><b class="s"></b>Sell</span></div></div>`;
-  const realizedTip = 'Profit or loss locked in by selling, using the average-cost method. Estimate — Schwab\'s tax lots can differ slightly.';
+  const realizedTip = 'Profit or loss locked in by selling, using the average-cost method. Schwab\'s tax lots can differ slightly.';
   const stats = `<div class="metrics hist-metrics">
     ${metric('Times owned', h.periods.length, cur ? 'Holding now' : 'Fully sold')}
     ${metric('Total bought', fmt.usd(h.bought), '')}
@@ -1090,7 +1089,7 @@ function renderHistoryLists() {
     { k: 'from', l: 'First bought', n: 1, f: (r) => fdate(r.from) },
     { k: 'to', l: 'Last sold', n: 1, f: (r) => fdate(r.to) },
     { k: 'held', l: 'Time held', n: 1, f: (r) => (r.held >= 1 ? r.held.toFixed(1) + ' yrs' : Math.max(1, Math.round(r.held * 12)) + ' mo') + (r.periods.length > 1 ? ` <span class="tag">${r.periods.length}×</span>` : '') },
-    { k: 'realized', l: 'Realized gain', n: 1, f: (r) => `<span class="${cls(r.realized)}">${fmt.usd(r.realized)}</span>`, t: 'Profit or loss from selling, average-cost method (estimate).' },
+    { k: 'realized', l: 'Realized gain', n: 1, f: (r) => `<span class="${cls(r.realized)}">${fmt.usd(r.realized)}</span>`, t: 'Profit or loss from selling, average-cost method.' },
     { k: 'dividends', l: 'Dividends', n: 1, f: (r) => fmt.usd(r.dividends) },
     { k: 'hist', l: '', f: (r) => `<button class="btn sm hist-btn" data-hist="${r.ticker}">History</button>` },
   ], rows.map((r) => ({ ...r, ticker: r.ticker })), 'to');
@@ -3037,7 +3036,6 @@ function drawReturns() {
       h += `<span style="color:${D.color}">●</span> ${esc(D.label)}: <b>${fmt.spct(f)}</b><br><span style="color:${C.grayLight}">●</span> ${esc(D.bench)}: <b>${fmt.spct(bb)}</b><br>`;
       h += f - bb >= 0 ? `<span style="color:${C.up}">Ahead of the benchmark by ${fmt.pct(f - bb, 1)}</span>` : `<span style="color:${C.down}">Behind the benchmark by ${fmt.pct(bb - f, 1)}</span>`;
       if (isYears && r.proxyShare > 0) h += `<br><span style="color:${C.muted}">◇ bond part uses AGG for ${Math.round(r.proxyShare * 100)}% of the year</span>`;
-      if (isYears && r.estShare > 0.005) h += `<br><span style="color:${C.muted}">${fmt.pct(r.estShare, 0)} of holdings estimated from our trade prices (no longer on Yahoo): ${esc(r.estTickers.slice(0, 6).join(', '))}${r.estTickers.length > 6 ? '…' : ''}</span>`;
       return h;
     } },
     xAxis: { type: 'category', data: cats, ...axisCommon, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { ...axisCommon.axisLabel, color: C.ink2, fontSize: isMobile() ? 10 : 12, interval: 0, rotate: isMobile() && cats.length > 9 ? 45 : 0 } },
@@ -3048,14 +3046,13 @@ function drawReturns() {
   const head = isYears ? ['Year', D.label, D.bench, 'Difference', 'Notes'] : ['Period', D.label, D.bench, 'Difference', 'Notes'];
   const body = rows.map((r) => {
     const f = val(r, 'fund'), bb = val(r, 'bench'), d = f - bb;
-    const n = isYears ? [r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '', r.estShare > 0.005 ? `<span class="est-note" title="These stocks have since been delisted, merged or bought out, so Yahoo has no prices for them. Their path is estimated from the prices we actually bought and sold at.">≈ ${fmt.pct(r.estShare, 0)} estimated: ${esc(r.estTickers.slice(0, 4).join(', '))}${r.estTickers.length > 4 ? ` +${r.estTickers.length - 4}` : ''}</span>` : ''].filter(Boolean).join(' · ')
+    const n = isYears ? (r.partial ? `${fdate(r.from)} – ${fdate(r.to)}` : '')
       : `since ${fdate(r.from)}${r.years >= 1 && r.fundAnn != null ? ` · per year ${fmt.spct(r.fundAnn)} vs ${fmt.spct(r.benchAnn)}` : ''}`;
     return `<tr><td><b>${isYears ? r.year : r.label}</b></td><td class="n ${cls(f)}">${fmt.spct(f)}</td><td class="n ${cls(bb)}">${fmt.spct(bb)}</td><td class="n ${cls(d)}">${fmt.spct(d)}</td><td style="color:var(--muted);font-size:12px">${n}</td></tr>`;
   }).join('');
   $('#tblYears').innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i && i < 4 ? 'n' : ''}" style="cursor:default">${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>`;
-  $('#rvTableHint').innerHTML = rows.some((r) => r.estShare > 0.005) ? '≈ = part of that year uses stocks that have since been delisted or bought out. Yahoo has no prices for them, so their path is estimated from our own buy and sell prices.' : 'Time-weighted, dividends and interest included';
+  $('#rvTableHint').innerHTML = 'Time-weighted, dividends and interest included';
   RV.last = { D, rows, isYears, val };
-  if ($('#rvQuality')) $('#rvQuality').innerHTML = qualityHTML();
 }
 function acSplitHTML() {
   if (!calc) return '';
@@ -3125,25 +3122,4 @@ async function verifyAndRepair(syms) {
     } catch (e) { bad.slice(i, i + 10).forEach((t) => { if (Q[t]) Q[t].tried = String(e.message || e); }); }
   }
   bad.forEach((t) => { if (!RV.all[t]) Q[t].source = 'Estimated from our trade prices'; });
-}
-function qualityHTML() {
-  const Q = RV.quality || {};
-  const rows = Object.entries(Q).map(([t, q]) => ({ t, ...q, name: S.hist.tickers[t]?.name || t }));
-  if (!rows.length) return '';
-  const by = (src) => rows.filter((r) => r.source === src).length;
-  const est = rows.filter((r) => /Estimated/.test(r.source));
-  const second = rows.filter((r) => r.source && !/Yahoo|Estimated/.test(r.source));
-  const rejected = rows.filter((r) => r.rejected);
-  const verified = rows.filter((r) => r.ok && r.checked);
-  const line = (r) => `<tr><td><span class="tk">${esc(r.t)}</span><span class="nm">${esc(r.name)}</span></td><td>${esc(r.source || '—')}</td><td class="n">${r.checked ? fmt.n(r.checked) : '—'}</td><td class="n">${r.medianErr != null ? fmt.pct(r.medianErr, 1) : '—'}</td><td style="font-size:12px;color:var(--muted)">${esc([r.rejected ? `${r.rejected} didn't match our trade prices` : '', r.missing && !r.rejected ? 'Not on Yahoo Finance' : '', r.tried || ''].filter(Boolean).join(' · '))}</td></tr>`;
-  const flagged = rows.filter((r) => r.rejected || r.missing || !/Yahoo/.test(r.source || ''));
-  return `<div class="dq-sum">
-      <div><b class="up">${verified.length}</b><span>price histories match our Schwab trade prices</span></div>
-      <div><b>${by('Yahoo Finance')}</b><span>from Yahoo Finance</span></div>
-      <div><b>${second.length}</b><span>from the second source (Tiingo)</span></div>
-      <div><b class="${est.length ? 'warn-t' : ''}">${est.length}</b><span>estimated from our trade prices</span></div>
-    </div>
-    <p class="dq-p">Every stock's price history is checked against the prices SMIF actually paid and received in Schwab (median gap allowed: 10%). ${rejected.length ? `${rejected.length} Yahoo histor${rejected.length > 1 ? 'ies were' : 'y was'} rejected because they didn't match — usually an old ticker that now belongs to a different company. ` : ''}${RV.secondSource === false && est.length ? 'A second source isn\'t set up yet, so missing stocks are estimated. Adding a free Tiingo key (see README) fills most of them with real prices.' : ''}</p>
-    ${flagged.length ? `<details class="fold"><summary><span>Stocks that needed a second source or an estimate (${flagged.length})</span><small>source · trades checked · median gap</small></summary><div class="table-wrap"><table><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Price source</th><th class="n" style="cursor:default">Trades checked</th><th class="n" style="cursor:default">Median gap</th><th style="cursor:default">Why</th></tr></thead><tbody>${flagged.map(line).join('')}</tbody></table></div></details>` : ''}
-    <details class="fold"><summary><span>All ${rows.length} holdings</span><small>where each price history comes from</small></summary><div class="table-wrap"><table><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Price source</th><th class="n" style="cursor:default">Trades checked</th><th class="n" style="cursor:default">Median gap</th><th style="cursor:default">Notes</th></tr></thead><tbody>${rows.sort((a, b) => a.t.localeCompare(b.t)).map(line).join('')}</tbody></table></div></details>`;
 }

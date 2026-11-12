@@ -713,3 +713,19 @@ html[data-theme="light"] { --ok-text: #0c6b3c; --bad-text: #a3261e; }
 .cmp-box .cmp-field .input#cmpInput { width: 100% !important; flex: none !important; }
 .stock-chart-bar .cmp-box { max-width: 480px; }
 @media (max-width: 600px) { .stock-chart-bar .cmp-box { max-width: none; } .cmp-field .suggest { min-width: 0; } }
+
+/* asset-class strip: dollar amounts big and easy to read */
+.ac-strip .ac-cell { display: block; padding: 12px 14px 12px; border-left: 3px solid var(--gray); }
+.ac-strip .ac-cell.eq { border-left-color: var(--gold); } .ac-strip .ac-cell.fi { border-left-color: var(--blue); } .ac-strip .ac-cell.mm { border-left-color: var(--violet); }
+.ac-strip .ac-l { display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.ac-strip .ac-l span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-strip .ac-l em { font-style: normal; font-weight: 800; font-size: 13px; color: var(--ink); background: rgba(var(--fg), .06); border-radius: 999px; padding: 2px 8px; }
+.ac-strip .ac-usd { display: block; font-size: 24px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); margin-top: 6px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.ac-strip .ac-cell small { display: none; }
+@media (max-width: 900px) { .ac-strip .ac-usd { font-size: 21px; } }
+@media (max-width: 380px) { .ac-strip .ac-usd { font-size: 18px; } .ac-strip .ac-l { font-size: 12px; } .ac-strip .ac-cell { padding: 10px 11px; } }
+@media (max-width: 600px) {
+  .ac-strip .ac-l em { display: none; }
+  .ac-strip .ac-l span { white-space: normal; overflow: visible; }
+  .ac-strip .ac-cell small { display: block; font-size: 12px; color: var(--ink-2); font-weight: 600; margin-top: 2px; }
+}

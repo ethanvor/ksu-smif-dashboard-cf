@@ -12,7 +12,7 @@
   "assets": {
     "directory": "./site",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/", "/index.html"]
   },
   // storage for the master copy + trade history (your "smif-data" KV namespace)
   "kv_namespaces": [

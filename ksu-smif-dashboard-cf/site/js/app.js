@@ -2884,7 +2884,7 @@ function acSummary() {
 }
 function acStripHTML() {
   const t = calc.total;
-  return `<div class="ac-strip">${acSummary().map((a) => `<div class="ac-cell"><i class="ac-dot ${a.k}"></i><span>${a.name}</span><b>${fmt.pct(a.v / t)}</b><small>${fmt.usd(a.v)}</small></div>`).join('')}</div>`;
+  return `<div class="ac-strip">${acSummary().map((a) => `<div class="ac-cell ${a.k}"><div class="ac-l"><i class="ac-dot ${a.k}"></i><span>${a.name}</span><em>${fmt.pct(a.v / t)}</em></div><b class="ac-usd">${fmt.usd(a.v)}</b><small>${fmt.pct(a.v / t)} of the fund</small></div>`).join('')}</div>`;
 }
 async function loadAllHistory() {
   if (RV.loaded || !S.api || !S.hist) return;

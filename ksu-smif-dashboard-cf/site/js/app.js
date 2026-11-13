@@ -662,13 +662,16 @@ function renderAllocation() {
     }),
   }));
   setChart('chTreemap', {
+    // no animation: when live prices arrive a few seconds after the page opens (and on every refresh) the treemap
+    // re-lays itself out, and the animated hand-off between layouts showed as scattered, half-drawn boxes.
+    animation: false,
     tooltip: { ...tooltipBase, formatter: (p) => {
       const r = p.data.r;
       if (!r) return `<b>${p.name}</b><br>${fmt.usd(p.value)} · ${fmt.pct(p.value / calc.total)} of fund`;
       return `<b>${r.ticker}</b> ${esc(r.name)}<br>Value: ${fmt.usd(r.value)} (${fmt.pct(r.weight, 2)})<br>Return since buy: <b>${fmt.spct(r.ret)}</b><br>Today: ${fmt.spct(r.dayChg, 2)}`;
     } },
     series: [{
-      type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false }, width: '100%', height: '100%', top: 0, left: 0,
+      type: 'treemap', animation: false, roam: false, nodeClick: false, breadcrumb: { show: false }, width: '100%', height: '100%', top: 0, left: 0,
       upperLabel: { show: true, height: isMobile() ? 20 : 24, color: C.goldText, fontWeight: 700, fontSize: isMobile() ? 10 : 12, backgroundColor: 'transparent', overflow: 'truncate', ellipsis: '',
         formatter: (p) => (p.name ? `${shortName(p.name)}  ${fmt.pct(p.value / calc.total, isMobile() ? 0 : 1)}` : '') },
       label: { show: true, color: '#fff', fontWeight: 700, fontSize: isMobile() ? 10 : 12, lineHeight: isMobile() ? 12 : 15, overflow: 'truncate', ellipsis: '',
@@ -755,7 +758,7 @@ function renderPerformance() {
   const sorted = [...rows].filter((r) => r[key] != null).sort((a, b) => b[key] - a[key]);
   $('#perfBarTitle').textContent = { ret: 'Return since purchase (%)', gl: 'Unrealized gain / loss ($)', ann: 'Annualized return (simple, as in the workbook)' }[mode];
   const f = mode === 'gl' ? (v) => fmt.usd(v) : (v) => fmt.spct(v, 0);
-  const tipFmt = (p) => { const r = sorted[p.dataIndex]; return `<b>${r.ticker}</b> ${esc(r.name)}<br>Return: ${fmt.spct(r.ret)} · ${fmt.usd(r.gl)}<br>Avg cost ${fmt.usdC(r.avgCost)} → ${fmt.usdC(r.price)}<br>Held ${r.days} days (since ${r.purchaseDate})${mode === 'ann' && r.days < 180 ? '<br><i>Short holding — annualized figure is exaggerated</i>' : ''}`; };
+  const tipFmt = (p) => { const r = sorted[p.dataIndex]; return `<b>${r.ticker}</b> ${esc(r.name)}<br>Return: ${fmt.spct(r.ret)} · ${fmt.usd(r.gl)}<br>Avg cost ${fmt.usdC(r.avgCost)} → ${fmt.usdC(r.price)}<br>Held ${r.days} days (since ${r.purchaseDate ? fdate(r.purchaseDate) : '—'})${mode === 'ann' && r.days < 180 ? '<br><i>Short holding — annualized figure is exaggerated</i>' : ''}`; };
   const valAxis = { type: 'value', ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: mode === 'gl' ? (v) => fmt.big(v) : (v) => fmt.pct(v, 0) } };
   const barData = sorted.map((r) => ({ value: r[key], itemStyle: { color: r[key] >= 0 ? C.up : C.down } }));
   const dom = document.getElementById('chPerfBar');
@@ -947,7 +950,7 @@ function renderHoldings() {
     { k: 'weight', l: 'Weight', n: 1, f: (r) => fmt.pct(r.weight, 2) },
     { k: 'gl', l: 'Unrealized G/L', n: 1, f: (r) => `<span class="${cls(r.gl)}">${fmt.usd(r.gl)}</span>` },
     { k: 'ret', l: '% return', n: 1, f: (r) => `<span class="${cls(r.ret)}">${fmt.spct(r.ret)}</span>` },
-    { k: 'purchaseDate', l: 'First bought', n: 1, f: (r) => r.purchaseDate || '—' },
+    { k: 'purchaseDate', l: 'First bought', n: 1, f: (r) => (r.purchaseDate ? fdate(r.purchaseDate) : '—') },
     { k: 'days', l: 'Days held', n: 1, f: (r) => fmt.n(r.days) },
     { k: 'annRet', l: 'Annualized', n: 1, f: (r) => `<span class="${cls(r.annRet)}">${fmt.spct(r.annRet)}</span>`, t: 'Return ÷ years held — same formula as the workbook. Exaggerated for very recent buys.' },
     { k: 'hist', l: 'History', f: (r) => (S.hist?.tickers[r.ticker] ? `<button class="btn sm hist-btn" data-hist="${r.ticker}">🕘 ${S.hist.tickers[r.ticker].trades.length}</button>` : '') },
@@ -1647,8 +1650,8 @@ function syncTradePanel() {
     <div><span>Action</span><b class="${t.side === 'buy' ? 'up' : 'down'}">${t.side.toUpperCase()} ${fmt.n(t.shares)} sh</b></div>
     <div><span>Price</span><b>${fmt.usdC(t.px)}</b></div>
     <div><span>Est. ${t.side === 'buy' ? 'cost' : 'proceeds'}</span><b>${fmt.usd(t.amount)}</b></div>
-    <div><span>Share of fund</span><b>${fmt.pct(t.amount / t.ac.total, 2)}</b></div>
-    <div><span>${s.symbol} weight</span><b>${fmt.pct(t.ac.rows.find((r) => r.ticker === s.symbol)?.weight || 0, 2)} → ${fmt.pct(nr?.weight || 0, 2)}</b></div>
+    <div><span>Trade size · % of total fund</span><b>${fmt.pct(t.amount / t.ac.total, 2)}</b></div>
+    <div><span>${s.symbol} · % of total fund</span><b>${fmt.pct(t.ac.rows.find((r) => r.ticker === s.symbol)?.weight || 0, 2)} → ${fmt.pct(nr?.weight || 0, 2)}</b></div>
     ${gicsCalcRows(s, t.ac, ac)}
     <div><span>Cash</span><b class="${ac.cash < 0 ? 'down' : ''}">${fmt.usd(t.ac.cash)} → ${fmt.usd(ac.cash)}</b></div>`;
   btn.disabled = false;
@@ -1663,7 +1666,8 @@ function gicsCalcRows(s, b, a) {
   const sec = s.sector, bw = S.base.benchmark.sectorWeights[sec];
   const w0 = b.sectors[sec]?.wEq || 0, w1 = a.sectors[sec]?.wEq || 0;
   let h = `<div class="calc-sec"><span>GICS sector</span><b>${esc(sec)}</b></div>
-    <div><span>${esc(shortName(sec))} weight ${tip('Share of our stocks (equities only) in this GICS sector — the same basis the IPS sector rules use.')}</span><b>${fmt.pct(w0, 1)} → ${fmt.pct(w1, 1)}</b></div>`;
+    <div><span>${esc(shortName(sec))} · % of equities ${tip('Share of our stocks (equities only) in this GICS sector — the basis the IPS sector rules and the S&P 500 comparison use.')}</span><b>${fmt.pct(w0, 1)} → ${fmt.pct(w1, 1)}</b></div>
+    <div><span>${esc(shortName(sec))} · % of total fund ${tip('Share of the whole fund, including bonds, money market and cash.')}</span><b>${fmt.pct(b.sectors[sec]?.wTotal || 0, 1)} → ${fmt.pct(a.sectors[sec]?.wTotal || 0, 1)}</b></div>`;
   if (bw != null) {
     const d0 = w0 - bw, d1 = w1 - bw;
     // the rule covers every sector: buying one stock also dilutes all the others
@@ -1672,7 +1676,7 @@ function gicsCalcRows(s, b, a) {
       return Math.abs(b1) > IPS.sectorTrade + 1e-9 && Math.abs(b1) > Math.abs(b0) + 1e-9;
     });
     const st = !pushed.length ? ['up', '✓ within IPS'] : ['warn-t', `! ${pushed.map((x) => esc(shortName(x))).join(', ')} past ±2`];
-    h += `<div><span>vs S&amp;P 500 (${fmt.pct(bw, 1)})</span><b>${fmt.pts(d0)} → ${fmt.pts(d1)}</b></div>
+    h += `<div><span>vs S&amp;P 500 (${fmt.pct(bw, 1)}), equities basis</span><b>${fmt.pts(d0)} → ${fmt.pts(d1)}</b></div>
       <div><span>Sector rule (±2 pts per trade)</span><b class="${st[0]}">${st[1]}</b></div>`;
   }
   return h;
@@ -1689,28 +1693,42 @@ function openImpactPopup() {
   const sells = S.trades.filter((t) => t.side === 'sell').reduce((x, t) => x + t.shares * t.price, 0);
   const touched = new Set(S.trades.map((t) => t.sector));
   const secs = SECTORS.filter((x) => before.sectors[x] || after.sectors[x] || bw[x] != null);
-  const rowsH = secs.map((x) => {
-    const w0 = before.sectors[x]?.wEq || 0, w1 = after.sectors[x]?.wEq || 0, b = bw[x] ?? 0, d0 = w0 - b, d1 = w1 - b;
+  // basis: 'eq' = share of our stocks (what the IPS sector rules use), 'tot' = share of the whole fund incl. bonds, money market and cash
+  const rowsFor = (basis) => secs.map((x) => {
+    const k = basis === 'eq' ? 'wEq' : 'wTotal';
+    const w0 = before.sectors[x]?.[k] || 0, w1 = after.sectors[x]?.[k] || 0, b = bw[x] ?? 0, d0 = w0 - b, d1 = w1 - b;
     const moved = Math.abs(w1 - w0) > 5e-5;
     const worse = moved && Math.abs(d1) > Math.abs(d0) + 1e-9;
     const flag = Math.abs(d1) > IPS.sectorRebalance ? `<span class="down">${worse ? 'Pushed outside ±3 ⚠' : 'Outside ±3 (rebalance)'}</span>`
       : Math.abs(d1) > IPS.sectorTrade ? (worse ? '<span class="warn-t">Pushed past ±2 ⚠</span>' : '<span style="color:var(--muted)">Already past ±2</span>') : '<span class="up">OK</span>';
-    return `<tr class="${moved || touched.has(x) ? 'imp-hit' : 'imp-dim'}"><td>${esc(x)}</td><td class="n">${fmt.pct(w0, 1)}</td><td class="n">${moved ? `<b>${fmt.pct(w1, 1)}</b>` : fmt.pct(w1, 1)}</td><td class="n">${fmt.pct(b, 1)}</td><td class="n">${fmt.pts(d0)} → ${fmt.pts(d1)}</td><td class="n">${flag}</td></tr>`;
+    return `<tr class="${moved || touched.has(x) ? 'imp-hit' : 'imp-dim'}"><td>${esc(x)}</td><td class="n">${fmt.pct(w0, 1)}</td><td class="n">${moved ? `<b>${fmt.pct(w1, 1)}</b>` : fmt.pct(w1, 1)}</td><td class="n">${fmt.pct(b, 1)}</td><td class="n">${fmt.pts(d0)} → ${fmt.pts(d1)}</td><td class="n">${basis === 'eq' ? flag : '<span style="color:var(--muted)">—</span>'}</td></tr>`;
   }).join('');
   const b = modal(`<h2>Trade impact</h2>
     <p style="margin-top:-4px">${S.trades.length} trade${S.trades.length > 1 ? 's' : ''} on the ticket: ${S.trades.map((t) => `<b class="${t.side === 'buy' ? 'up' : 'down'}">${t.side === 'buy' ? '+' : '−'}${fmt.n(t.shares)} ${esc(t.ticker)}</b>`).join(', ')}</p>
     <div class="tr-sum">
-      <div><small>Cost of buys</small><b>${fmt.usd(buys)}</b><div class="sub">${fmt.pct(buys / before.total, 2)} of the fund</div></div>
-      <div><small>Sale proceeds</small><b>${fmt.usd(sells)}</b><div class="sub">${fmt.pct(sells / before.total, 2)} of the fund</div></div>
-      <div><small>Cash</small><b class="${after.cash < 0 ? 'down' : ''}">${fmt.usd(before.cash)} → ${fmt.usd(after.cash)}</b><div class="sub">${after.cash < 0 ? 'Not enough cash — buys are paid from cash only' : `${fmt.pct(after.cash / after.total, 1)} of the fund after`}</div></div>
+      <div><small>Cost of buys</small><b>${fmt.usd(buys)}</b><div class="sub">${fmt.pct(buys / before.total, 2)} of the total fund</div></div>
+      <div><small>Sale proceeds</small><b>${fmt.usd(sells)}</b><div class="sub">${fmt.pct(sells / before.total, 2)} of the total fund</div></div>
+      <div><small>Cash</small><b class="${after.cash < 0 ? 'down' : ''}">${fmt.usd(before.cash)} → ${fmt.usd(after.cash)}</b><div class="sub">${after.cash < 0 ? 'Not enough cash — buys are paid from cash only' : `${fmt.pct(after.cash / after.total, 1)} of the total fund after`}</div></div>
     </div>
-    <h3 class="mt">GICS sector weights <span style="font-weight:400;color:var(--muted);font-size:12px">· share of our stocks</span></h3>
-    <div class="table-wrap"><table class="imp-table"><thead><tr><th>Sector</th><th class="n">Now</th><th class="n">After</th><th class="n">S&amp;P 500</th><th class="n">vs S&amp;P (pts)</th><th class="n">IPS ${tip('IPS: no trade may push a sector more than ±2 pts from the S&P 500; rebalance beyond ±3 pts. A buy dilutes every other sector, so sectors you didn\'t trade can move too.')}</th></tr></thead><tbody>${rowsH}</tbody></table></div>
+    <div class="imp-mix"><span>Equities</span><b>${fmt.pct(before.eqValue / before.total, 1)} → ${fmt.pct(after.eqValue / after.total, 1)}</b><span>of the total fund</span><span class="imp-sep">·</span><span>Stocks</span><b>${fmt.usd(before.eqValue)} → ${fmt.usd(after.eqValue)}</b></div>
+    <div class="row mt" style="justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">GICS sector weights</h3>
+      <div class="seg sm" id="impBasis"><button data-v="eq" class="on">% of equities</button><button data-v="tot">% of total fund</button></div>
+    </div>
+    <div class="imp-basis" id="impBasisNote"></div>
+    <div class="table-wrap"><table class="imp-table"><thead><tr><th>Sector</th><th class="n">Now</th><th class="n">After</th><th class="n">S&amp;P 500</th><th class="n">vs S&amp;P (pts)</th><th class="n">IPS ${tip('IPS: no trade may push a sector more than ±2 pts from the S&P 500; rebalance beyond ±3 pts. Measured on our equities only, since the S&P 500 is an all-stock index. A buy dilutes every other sector, so sectors you didn\'t trade can move too.')}</th></tr></thead><tbody id="impRows">${rowsFor('eq')}</tbody></table></div>
     <h3 class="mt">Everything else that changes</h3>
     <div class="imp-pop">${$('#impact').innerHTML}</div>
     <div class="row mt" style="justify-content:flex-end"><button class="btn" id="impClose">Close</button></div>`);
   b.classList.add('wide');
   $('#impClose', b).onclick = closeModal;
+  const NOTE = {
+    eq: '<b>Equities only.</b> Each sector as a share of our stock portfolio — bonds, money market and cash left out. This is the basis the IPS sector rules and the Weighting tab use, and the like-for-like comparison with the all-stock S&amp;P 500.',
+    tot: '<b>Whole fund.</b> Each sector as a share of everything we hold, including bonds, money market and cash. Weights are lower because the fund is not 100% stocks, so they aren\'t directly comparable to the S&amp;P 500 and the IPS check doesn\'t apply here.',
+  };
+  const setBasis = (v) => { $('#impRows', b).innerHTML = rowsFor(v); $('#impBasisNote', b).innerHTML = NOTE[v]; $$('#impBasis button', b).forEach((x) => x.classList.toggle('on', x.dataset.v === v)); };
+  $$('#impBasis button', b).forEach((x) => x.addEventListener('click', () => setBasis(x.dataset.v)));
+  setBasis('eq');
 }
 
 function mkTrade(t) {
@@ -1937,18 +1955,201 @@ function renderData() {
   $('#setName').value = S.settings.name || '';
   $('#setKey').value = store.sget('key');
 }
+// ---------- holdings editor: buy / sell pop-ups instead of typing into a spreadsheet ----------
+const AC_ORDER = { Equity: 0, 'Fixed Income': 1, 'Money Market': 2 };
+const shStr = (v) => fmt.n(v, Math.abs(v % 1) > 1e-6 ? 4 : 0);
+function draftLog() { return (S.draftLog = S.draftLog || []); }
 function renderEditTable() {
-  const cols = [['ticker', 'Ticker', 'text', 90], ['name', 'Name', 'text', 220], ['assetClass', 'Class', 'sel', 130], ['sector', 'Sector', 'text', 190], ['quantity', 'Shares', 'number', 100], ['avgCost', 'Avg cost', 'number', 110], ['purchaseDate', 'First bought', 'date', 150]];
-  const classes = ['Equity', 'Fixed Income', 'Money Market'];
-  $('#tblEdit').innerHTML = `<thead><tr>${cols.map((c) => `<th style="cursor:default">${c[1]}</th>`).join('')}<th></th></tr></thead><tbody>${S.draft.holdings.map((h, i) => `<tr>${cols.map(([k, , t, w]) => `<td style="min-width:${w}px">${t === 'sel' ? `<select class="input" data-i="${i}" data-k="${k}">${classes.map((c) => `<option ${h[k] === c ? 'selected' : ''}>${c}</option>`).join('')}</select>` : `<input class="input" data-i="${i}" data-k="${k}" type="${t}" value="${esc(k === 'avgCost' && h[k] != null ? +(+h[k]).toFixed(4) : h[k] ?? '')}" ${t === 'number' ? 'step="any"' : ''}/>`}</td>`).join('')}<td><button class="btn sm danger" data-del="${i}">✕</button></td></tr>`).join('')}</tbody>`;
+  const base = Object.fromEntries(S.base.holdings.map((h) => [h.ticker, h]));
+  const rows = S.draft.holdings.map((h, i) => ({ h, i })).sort((x, y) => (AC_ORDER[x.h.assetClass] ?? 3) - (AC_ORDER[y.h.assetClass] ?? 3) || x.h.ticker.localeCompare(y.h.ticker));
+  const changed = (h) => { const o = base[h.ticker]; return !o ? 'new' : ['quantity', 'avgCost', 'sector', 'assetClass', 'purchaseDate'].some((k) => String(o[k] ?? '') !== String(h[k] ?? '')) ? 'edit' : ''; };
+  const removed = S.base.holdings.filter((h) => !S.draft.holdings.some((x) => x.ticker === h.ticker));
+  const log = draftLog();
+  const cashChanged = Math.abs((+S.draft.cash || 0) - (+S.base.cash || 0)) > 0.005;
+  $('#editPending').innerHTML = log.length || removed.length || cashChanged || rows.some((r) => changed(r.h))
+    ? `<div class="ed-pending"><div><b>Unpublished changes</b><span>${log.length ? log.map(esc).join(' · ') : 'Edits in the table below'}</span></div><button class="btn sm primary" id="edReview">Review &amp; publish</button></div>` : '';
+  $('#edReview')?.addEventListener('click', () => $('#publishEdits').click());
+  let lastAc = '';
+  $('#tblEdit').innerHTML = `<thead><tr><th>Holding</th><th>Class</th><th>GICS sector</th><th class="n">Shares</th><th class="n">Avg cost</th><th>First bought</th><th class="n">Trade</th></tr></thead><tbody>${rows.map(({ h, i }) => {
+    const grp = h.assetClass !== lastAc ? `<tr class="tr-group"><td colspan="7">${acTag(h.assetClass)}</td></tr>` : ''; lastAc = h.assetClass;
+    const c = changed(h);
+    return `${grp}<tr class="ed-row ${c ? 'ed-' + c : ''}">
+      <td><div class="ed-hold"><b>${esc(h.ticker)}</b><span>${esc(h.name || '')}</span>${c === 'new' ? '<em class="ed-badge new">New</em>' : c ? '<em class="ed-badge">Edited</em>' : ''}</div></td>
+      <td><select class="input sm" data-i="${i}" data-k="assetClass">${Object.keys(AC_ORDER).map((x) => `<option ${h.assetClass === x ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+      <td>${h.assetClass === 'Equity' ? `<select class="input sm" data-i="${i}" data-k="sector">${(SECTORS.includes(h.sector) ? [] : ['']).concat(SECTORS).map((x) => `<option value="${esc(x)}" ${h.sector === x ? 'selected' : ''}>${x || 'Choose a sector…'}</option>`).join('')}</select>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="n"><input class="input sm n" data-i="${i}" data-k="quantity" type="number" step="any" min="0" value="${+(+h.quantity).toFixed(4)}" /></td>
+      <td class="n"><input class="input sm n" data-i="${i}" data-k="avgCost" type="number" step="any" min="0" value="${h.avgCost != null ? +(+h.avgCost).toFixed(4) : ''}" /></td>
+      <td><input class="input sm" data-i="${i}" data-k="purchaseDate" type="date" value="${esc(h.purchaseDate || '')}" /></td>
+      <td class="n"><div class="ed-act"><button class="btn sm ed-buy" data-buy="${i}" title="Buy more ${esc(h.ticker)}">＋ Buy</button><button class="btn sm ed-sell" data-sell="${i}" title="Trim or sell ${esc(h.ticker)}">− Sell</button></div></td></tr>`;
+  }).join('')}${removed.map((h) => `<tr class="ed-row ed-gone"><td><div class="ed-hold"><b>${esc(h.ticker)}</b><span>${esc(h.name || '')}</span><em class="ed-badge sold">Sold out</em></div></td><td colspan="5" style="color:var(--muted)">Removed from the draft</td><td class="n"><button class="btn sm" data-undo="${esc(h.ticker)}">Undo</button></td></tr>`).join('')}</tbody>`;
   $$('#tblEdit [data-k]').forEach((el) => el.addEventListener('change', () => {
     const h = S.draft.holdings[+el.dataset.i];
     let v = el.value;
-    if (el.dataset.k === 'quantity' || el.dataset.k === 'avgCost') v = parseFloat(v) || 0;
-    if (el.dataset.k === 'ticker') v = v.toUpperCase().trim();
+    if (el.dataset.k === 'quantity' || el.dataset.k === 'avgCost') v = Math.max(0, parseFloat(v) || 0);
     h[el.dataset.k] = v;
+    renderEditTable();
   }));
-  $$('#tblEdit [data-del]').forEach((b) => b.addEventListener('click', () => { S.draft.holdings.splice(+b.dataset.del, 1); renderEditTable(); }));
+  $$('#tblEdit [data-buy]').forEach((b) => b.addEventListener('click', () => openBuyDialog(S.draft.holdings[+b.dataset.buy].ticker)));
+  $$('#tblEdit [data-sell]').forEach((b) => b.addEventListener('click', () => openSellDialog(+b.dataset.sell)));
+  $$('#tblEdit [data-undo]').forEach((b) => b.addEventListener('click', () => {
+    const o = S.base.holdings.find((h) => h.ticker === b.dataset.undo);
+    if (o) S.draft.holdings.push(JSON.parse(JSON.stringify(o)));
+    S.draftLog = draftLog().filter((x) => !x.endsWith(' ' + b.dataset.undo) && !x.includes(' ' + b.dataset.undo + ' '));
+    renderEditTable();
+  }));
+}
+async function livePrice(t) {
+  if (/^(SNOXX|SWVXX|SNVXX)$/.test(t) || S.draft.holdings.find((h) => h.ticker === t)?.assetClass === 'Money Market') return 1;
+  const m = S.market[t]; if (m?.price) return +m.price;
+  if (!S.api) return S.draft.holdings.find((h) => h.ticker === t)?.price ?? null;
+  try { const r = await getJSON(`/api/market?symbols=${encodeURIComponent(t)}&range=1mo`, {}, 6000); const d = r.data?.[0]; if (d?.price) { S.market[t] = S.market[t] || d; return +d.price; } } catch { /* typed in by hand instead */ }
+  return null;
+}
+// what a change does to the fund: cash, the holding's weight and its sector's weight (equities only)
+function draftEffect(next) {
+  const px = {}; [...S.draft.holdings, ...next.holdings].forEach((h) => { const p = S.market[h.ticker]?.price ?? h.price ?? h.avgCost; px[h.ticker] = { price: +p, prevClose: +p }; });
+  return { b: computePortfolio(S.draft, px), a: computePortfolio(next, px) };
+}
+function effectRows(t, next, sector) {
+  const { b, a } = draftEffect(next);
+  const w0 = b.rows.find((r) => r.ticker === t)?.weight || 0, w1 = a.rows.find((r) => r.ticker === t)?.weight || 0;
+  let h = `<div><span>${esc(t)} · % of total fund</span><b>${fmt.pct(w0, 2)} → ${fmt.pct(w1, 2)}</b></div>
+    <div><span>Cash</span><b class="${a.cash < 0 ? 'down' : ''}">${fmt.usd(b.cash)} → ${fmt.usd(a.cash)}</b></div>`;
+  const bw = S.base.benchmark.sectorWeights[sector];
+  if (sector && bw != null) {
+    const s0 = b.sectors[sector]?.wEq || 0, s1 = a.sectors[sector]?.wEq || 0;
+    h += `<div><span>${esc(shortName(sector))} · % of equities</span><b>${fmt.pct(s0, 1)} → ${fmt.pct(s1, 1)}</b></div><div><span>${esc(shortName(sector))} · % of total fund</span><b>${fmt.pct(b.sectors[sector]?.wTotal || 0, 1)} → ${fmt.pct(a.sectors[sector]?.wTotal || 0, 1)}</b></div><div><span>vs S&amp;P 500 (${fmt.pct(bw, 1)}), equities basis</span><b class="${Math.abs(s1 - bw) > IPS.sectorTrade && Math.abs(s1 - bw) > Math.abs(s0 - bw) ? 'warn-t' : ''}">${fmt.pts(s0 - bw)} → ${fmt.pts(s1 - bw)}</b></div>`;
+  }
+  return { html: h, cashAfter: a.cash };
+}
+function openBuyDialog(preset) {
+  const st = { t: preset || '', name: '', sector: '', industry: '', ac: 'Equity', price: null };
+  const b = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start"><h2>${preset ? 'Buy more ' + esc(preset) : 'Add a holding'}</h2><button class="btn sm" id="bdX">✕</button></div>
+    <div class="ed-search" ${preset ? 'style="display:none"' : ''}><label class="field">Stock, ETF or fund<div style="position:relative"><input class="input" id="bdQ" placeholder="Ticker or company name (e.g. T-Mobile)" autocomplete="off" /><div class="suggest" id="bdSug"></div></div></label></div>
+    <div id="bdPick" class="ed-pick"></div>
+    <div id="bdForm" style="display:none">
+      <div class="grid g-3 ed-fields">
+        <label class="field">Shares bought<input class="input" id="bdSh" type="number" step="any" min="0" placeholder="0" /></label>
+        <label class="field">Price per share<input class="input" id="bdPx" type="number" step="any" min="0" /></label>
+        <label class="field">Trade date<input class="input" id="bdDt" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+      </div>
+      <div class="grid g-2 ed-fields">
+        <label class="field">Class<select class="input" id="bdAc">${Object.keys(AC_ORDER).map((x) => `<option>${x}</option>`).join('')}</select></label>
+        <label class="field" id="bdSecF">GICS sector<select class="input" id="bdSec"><option value="">Choose a sector…</option>${SECTORS.map((x) => `<option>${x}</option>`).join('')}</select></label>
+      </div>
+      <label class="ed-check"><input type="checkbox" id="bdCash" checked /> Pay from cash</label>
+      <div class="calc mt" id="bdCalc"></div>
+      <div class="row mt"><button class="btn primary" id="bdOk" disabled>Add to draft</button><button class="btn" id="bdCancel">Cancel</button></div>
+    </div>`);
+  $('#bdX', b).onclick = closeModal; $('#bdCancel', b).onclick = closeModal;
+  const calc = () => {
+    const q = Math.max(0, +$('#bdSh', b).value || 0), px = Math.max(0, +$('#bdPx', b).value || 0);
+    st.ac = $('#bdAc', b).value; st.sector = st.ac === 'Equity' ? $('#bdSec', b).value : '';
+    $('#bdSecF', b).style.display = st.ac === 'Equity' ? '' : 'none';
+    const ok = q > 0 && px > 0 && (st.ac !== 'Equity' || st.sector);
+    $('#bdOk', b).disabled = !ok;
+    $('#bdOk', b).textContent = ok ? `Buy ${shStr(q)} ${st.t} for ${fmt.usd(q * px)}` : st.ac === 'Equity' && !st.sector ? 'Choose a sector' : 'Enter shares and price';
+    if (!q || !px) { $('#bdCalc', b).innerHTML = '<div><span>Cost</span><b>—</b></div>'; return; }
+    const next = applyBuy(JSON.parse(JSON.stringify(S.draft)), q, px);
+    const e = effectRows(st.t, next, st.sector);
+    $('#bdCalc', b).innerHTML = `<div><span>Cost</span><b>${fmt.usd(q * px)}</b></div>${e.html}${e.cashAfter < 0 ? '<div class="ed-warn">Not enough cash — buys are paid from cash only. Sell something first or untick "Pay from cash" if the cash is already reflected.</div>' : ''}`;
+  };
+  const applyBuy = (d, q, px) => {
+    const h = d.holdings.find((x) => x.ticker === st.t);
+    if (h) { const n = +h.quantity + q; h.avgCost = (+h.quantity * (+h.avgCost || 0) + q * px) / n; h.quantity = n; if (!h.purchaseDate) h.purchaseDate = $('#bdDt', b).value; if (st.ac === 'Equity' && st.sector) h.sector = st.sector; }
+    else d.holdings.push({ ticker: st.t, name: st.name || st.t, assetClass: st.ac, sector: st.ac === 'Equity' ? st.sector : '', industry: st.ac === 'Equity' ? st.industry : '', quantity: q, avgCost: px, purchaseDate: $('#bdDt', b).value, price: px });
+    if ($('#bdCash', b).checked) d.cash = +((+d.cash || 0) - q * px).toFixed(2);
+    return d;
+  };
+  const pick = async (sym) => {
+    sym = String(sym || '').toUpperCase().trim(); if (!sym) return;
+    st.t = sym;
+    const held = S.draft.holdings.find((h) => h.ticker === sym);
+    const u = universe().find((x) => x.symbol === sym);
+    st.name = held?.name || u?.name || '';
+    st.ac = held?.assetClass || assetClassOf(sym, st.name, currentClasses());
+    st.sector = held?.sector || u?.sector || '';
+    $('#bdPick', b).innerHTML = `<div class="ed-chosen"><b>${esc(sym)}</b><span>${esc(st.name || 'Looking up…')}</span>${held ? `<em>Held: ${shStr(+held.quantity)} sh @ ${fmt.usdC(+held.avgCost)}</em>` : ''}<span class="ed-px">…</span></div>`;
+    $('#bdForm', b).style.display = '';
+    $('#bdAc', b).value = st.ac;
+    const [px, prof] = await Promise.all([livePrice(sym), !st.name || !st.sector ? getJSON(`/api/profile?symbol=${encodeURIComponent(sym)}`, {}, 4500).catch(() => null) : null]);
+    if (st.t !== sym) return;
+    if (prof) {
+      st.name = st.name || prof.name || sym;
+      const g = gicsFor(null, prof, prof.sector, u?.sector || null, sym);
+      st.sector = st.sector || g.sector || ''; st.industry = g.industry || '';
+      if (!held) { st.ac = assetClassOf(sym, st.name, currentClasses()); $('#bdAc', b).value = st.ac; }
+    }
+    st.price = px;
+    $('.ed-chosen span', b).textContent = st.name || sym;
+    $('.ed-px', b).textContent = px ? `Last ${fmt.usdC(px)}` : 'Price unavailable — type it in';
+    if (px && !$('#bdPx', b).value) $('#bdPx', b).value = +px.toFixed(4);
+    if (SECTORS.includes(st.sector)) $('#bdSec', b).value = st.sector;
+    calc(); $('#bdSh', b).focus();
+  };
+  attachSearch($('#bdQ', b), $('#bdSug', b), pick);
+  ['#bdSh', '#bdPx', '#bdAc', '#bdSec', '#bdCash'].forEach((k) => $(k, b).addEventListener('input', calc));
+  $('#bdOk', b).onclick = () => {
+    const q = +$('#bdSh', b).value, px = +$('#bdPx', b).value;
+    const isNew = !S.draft.holdings.some((h) => h.ticker === st.t);
+    S.draft = applyBuy(S.draft, q, px);
+    draftLog().push(`${isNew ? 'New' : 'Bought'} ${shStr(q)} ${st.t} @ ${fmt.usdC(px)}`);
+    closeModal(); $('#editCash').value = (+S.draft.cash).toFixed(2); renderEditTable();
+    toast(`${st.t} added to the draft — publish when you're done`);
+  };
+  if (preset) pick(preset); else setTimeout(() => $('#bdQ', b).focus(), 50);
+}
+async function openSellDialog(i) {
+  const h = S.draft.holdings[i]; if (!h) return;
+  const held = +h.quantity, avg = +h.avgCost || 0, t = h.ticker;
+  const b = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start"><h2>Sell ${esc(t)}</h2><button class="btn sm" id="sdX">✕</button></div>
+    <div class="ed-chosen"><b>${esc(t)}</b><span>${esc(h.name || '')}</span><em>Held: ${shStr(held)} sh @ ${fmt.usdC(avg)} avg cost</em><span class="ed-px">…</span></div>
+    <div class="seg sm mt" id="sdQuick">${[['0.25', '25%'], ['0.5', '50%'], ['0.75', '75%'], ['1', 'Sell all']].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="grid g-3 ed-fields mt">
+      <label class="field">Shares to sell<input class="input" id="sdSh" type="number" step="any" min="0" max="${held}" /></label>
+      <label class="field">Sell price per share<input class="input" id="sdPx" type="number" step="any" min="0" /></label>
+      <label class="field">Trade date<input class="input" id="sdDt" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+    </div>
+    <label class="ed-check"><input type="checkbox" id="sdCash" checked /> Add the proceeds to cash</label>
+    <div class="calc mt" id="sdCalc"></div>
+    <div class="row mt"><button class="btn danger-solid" id="sdOk" disabled>Sell</button><button class="btn" id="sdCancel">Cancel</button></div>`);
+  $('#sdX', b).onclick = closeModal; $('#sdCancel', b).onclick = closeModal;
+  const apply = (d, q, px) => {
+    const x = d.holdings.find((y) => y.ticker === t);
+    x.quantity = +(+x.quantity - q).toFixed(6);
+    if (x.quantity <= 1e-6) d.holdings = d.holdings.filter((y) => y !== x);
+    if ($('#sdCash', b).checked) d.cash = +((+d.cash || 0) + q * px).toFixed(2);
+    return d;
+  };
+  const calc = () => {
+    let q = Math.max(0, +$('#sdSh', b).value || 0); const px = Math.max(0, +$('#sdPx', b).value || 0);
+    if (q > held) { q = held; $('#sdSh', b).value = shStr(held).replace(/,/g, ''); }
+    $$('#sdQuick button', b).forEach((x) => x.classList.toggle('on', Math.abs(held * +x.dataset.v - q) < 1e-6));
+    const ok = q > 0 && px > 0;
+    $('#sdOk', b).disabled = !ok;
+    $('#sdOk', b).textContent = !ok ? 'Enter shares and price' : q >= held - 1e-6 ? `Sell all ${shStr(held)} sh & remove` : `Sell ${shStr(q)} sh for ${fmt.usd(q * px)}`;
+    if (!ok) { $('#sdCalc', b).innerHTML = '<div><span>Proceeds</span><b>—</b></div>'; return; }
+    const gain = (px - avg) * q;
+    const e = effectRows(t, apply(JSON.parse(JSON.stringify(S.draft)), q, px), h.assetClass === 'Equity' ? h.sector : '');
+    $('#sdCalc', b).innerHTML = `<div><span>Proceeds</span><b>${fmt.usd(q * px)}</b></div>
+      <div><span>Realized gain / loss</span><b class="${cls(gain)}">${gain >= 0 ? '+' : '−'}${fmt.usd(Math.abs(gain))} (${fmt.spct(avg ? px / avg - 1 : 0)})</b></div>
+      <div><span>Shares left</span><b>${shStr(Math.max(0, held - q))}</b></div>${e.html}`;
+  };
+  $$('#sdQuick button', b).forEach((x) => x.addEventListener('click', () => { const v = +x.dataset.v; $('#sdSh', b).value = v === 1 ? held : +(held * v).toFixed(h.assetClass === 'Money Market' ? 2 : 0) || +(held * v).toFixed(4); calc(); }));
+  ['#sdSh', '#sdPx', '#sdCash'].forEach((k) => $(k, b).addEventListener('input', calc));
+  $('#sdOk', b).onclick = () => {
+    const q = Math.min(held, +$('#sdSh', b).value), px = +$('#sdPx', b).value;
+    S.draft = apply(S.draft, q, px);
+    draftLog().push(`${q >= held - 1e-6 ? 'Sold all' : 'Sold'} ${shStr(q)} ${t} @ ${fmt.usdC(px)}`);
+    closeModal(); $('#editCash').value = (+S.draft.cash).toFixed(2); renderEditTable();
+    toast(`${t} ${q >= held - 1e-6 ? 'removed' : 'trimmed'} in the draft — publish when you're done`);
+  };
+  calc();
+  const px = await livePrice(t);
+  if (!$('#sdPx', b)) return;
+  $('.ed-px', b).textContent = px ? `Last ${fmt.usdC(px)}` : 'Price unavailable — type it in';
+  if (px && !$('#sdPx', b).value) $('#sdPx', b).value = +px.toFixed(4);
+  calc(); $('#sdSh', b).focus();
 }
 
 // ---- Excel export / import ----
@@ -2300,17 +2501,17 @@ function openTradeReview(next, fname, parsed = {}) {
   const cashGap = D.cashTo - D.cashFrom - D.implied;
   const checks = [
     ...(parsed.checks || []).map((c) => ({ ok: c.ok, text: c.text })),
-    D.rows.length ? { ok: Math.abs(cashGap) < Math.max(50, Math.abs(D.implied) * 0.02), text: `Cash ${fmt.usdC(D.cashFrom)} → ${fmt.usdC(D.cashTo)} (${D.cashTo - D.cashFrom >= 0 ? '+' : '−'}${fmt.usd(Math.abs(D.cashTo - D.cashFrom))}). The trades above imply ${D.implied >= 0 ? '+' : '−'}${fmt.usd(Math.abs(D.implied))}${Math.abs(cashGap) < 1 ? '' : Math.abs(cashGap) < Math.max(50, Math.abs(D.implied) * 0.02) ? `; the small ${fmt.usd(Math.abs(cashGap))} difference is normal (dividends, fees, fill prices)` : `, so ${fmt.usd(Math.abs(cashGap))} is unexplained. Double-check the Cash row in the file`}.` }
+    D.rows.length ? { ok: Math.abs(cashGap) < Math.max(50, Math.abs(D.implied) * 0.02), text: `Cash ${fmt.usdC(D.cashFrom)} → ${fmt.usdC(D.cashTo)} (${D.cashTo - D.cashFrom >= 0 ? '+' : '−'}${fmt.usd(Math.abs(D.cashTo - D.cashFrom))}). The trades above imply ${D.implied >= 0 ? '+' : '−'}${fmt.usd(Math.abs(D.implied))}${Math.abs(cashGap) < 1 ? '' : Math.abs(cashGap) < Math.max(50, Math.abs(D.implied) * 0.02) ? `; the small ${fmt.usd(Math.abs(cashGap))} difference is normal (dividends, fees, fill prices)` : `, so ${fmt.usd(Math.abs(cashGap))} is unexplained. ${parsed.manual ? 'Check the cash box' : 'Double-check the Cash row in the file'}`}.` }
       : { ok: Math.abs(D.cashTo - D.cashFrom) < 0.01, text: Math.abs(D.cashTo - D.cashFrom) < 0.01 ? `Cash unchanged at ${fmt.usdC(D.cashTo)}.` : `Cash ${fmt.usdC(D.cashFrom)} → ${fmt.usdC(D.cashTo)} with no trades. Fine if it's dividends or a deposit; otherwise check the Cash row against the Schwab balance.` },
   ];
   const warn = [...(parsed.warnings || [])];
-  if (D.cashTo < 0) warn.push('Cash is negative in the uploaded file.');
+  if (D.cashTo < 0) warn.push(parsed.manual ? 'Cash would be negative.' : 'Cash is negative in the uploaded file.');
   const goneN = D.rows.filter((r) => r.action === 'Sold out').length;
   if (D.before.rows.length >= 6 && goneN >= D.before.rows.length / 2) warn.unshift(`This file would sell out ${goneN} of ${D.before.rows.length} holdings. If you didn't mean that, it's probably the wrong file (e.g. the blank template with example rows) — press Cancel.`);
   const tickers = new Set(next.holdings.map((h) => h.ticker));
   if (['AAPL', 'JPM', 'XOM', 'LQD', 'SNOXX'].every((t) => tickers.has(t)) && next.holdings.length === 5 && Math.abs(+next.cash - 4461.46) < 0.01) warn.unshift('These look like the template\'s example rows. Replace them with the fund\'s real holdings before publishing.');
-  const b = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div style="min-width:0"><h2>Review proposed trades</h2>
-      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">${esc(fname)} vs the current master${since ? ` (as of ${fdate(since)})` : ''} · ${esc((parsed.found || []).join(' · '))}</div></div><button class="btn sm" id="trClose">✕</button></div>
+  const b = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div style="min-width:0"><h2>${parsed.manual ? 'Review changes before publishing' : 'Review proposed trades'}</h2>
+      <div class="hint" style="color:var(--muted);font-size:12px;margin-top:4px">${parsed.manual ? 'Your edits' : esc(fname)} vs the current master${since ? ` (as of ${fdate(since)})` : ''} · ${esc((parsed.found || []).join(' · '))}</div></div><button class="btn sm" id="trClose">✕</button></div>
     <div class="tr-sum">
       <div><small>Trades found</small><b>${summary}</b></div>
       <div><small>Total value</small><b>${fmt.usd(D.before.total)} <span class="arrow">→</span> ${fmt.usd(D.after.total)}</b></div>
@@ -2318,16 +2519,17 @@ function openTradeReview(next, fname, parsed = {}) {
     </div>
     ${D.rows.length ? `<div class="table-wrap"><table class="tr-table"><thead><tr><th style="cursor:default">Holding</th><th style="cursor:default">Trade</th><th class="n" style="cursor:default">Shares (old → new)</th><th class="n" style="cursor:default">Trade value ${tip('Change in shares × the price in the uploaded file. Weights use that same price for both old and new, so they show the effect of the trades only, not price moves.')}</th><th class="n" style="cursor:default">Weight (old → new)</th></tr></thead><tbody>${D.rows.map((r, i) => (i === 0 || D.rows[i - 1].ac !== r.ac ? `<tr class="tr-group"><td colspan="5">${acTag(r.ac)}<span>${D.rows.filter((x) => x.ac === r.ac).length} change${D.rows.filter((x) => x.ac === r.ac).length > 1 ? 's' : ''}</span></td></tr>` : '') + rowHTML(r)).join('')}</tbody></table></div>
       <div class="hint" style="color:var(--muted);font-size:12px">${D.unchanged} other position${D.unchanged === 1 ? '' : 's'} unchanged.</div>`
-      : `<div class="empty" style="padding:14px">No trades — share counts are the same as the current master.</div>`}
+      : `<div class="empty" style="padding:14px">No trades — share counts are the same as the current master.${parsed.manual ? ' Other edits (sector, cost, dates, cash) will still be published.' : ''}</div>`}
     ${D.basis.length ? `<details class="fold"><summary><span>Cost basis updated without a trade (${D.basis.length})</span><small>Usually Schwab lot adjustments</small></summary><div style="font-size:13px;color:var(--ink-2)">${D.basis.map((x) => `<div class="list-item"><b>${esc(x.t)}</b><span>${fmt.usdC(x.from)} → ${fmt.usdC(x.to)} per share</span></div>`).join('')}</div></details>` : ''}
     <div class="recon">${checks.map((c) => `<div class="${c.ok ? 'ok' : 'warn'}"><span>${esc(c.text)}</span></div>`).join('')}${warn.map((w) => `<div class="warn"><span>${esc(w)}</span></div>`).join('')}</div>
     <div class="row"><button class="btn primary" id="trPublish">Looks right — publish</button><button class="btn" id="trLocal">Use for me only</button><button class="btn" id="trCancel">Cancel</button></div>`);
   $('#modalBody').classList.add('wide');
-  const note = D.rows.length ? `Uploaded ${fname}: ${D.rows.map((r) => `${r.d > 0 ? 'bought' : 'sold'} ${sh(Math.abs(r.d))} ${r.t}`).join(', ')}` : `Uploaded ${fname}`;
+  const note = parsed.manual ? (draftLog().length ? draftLog().join('; ') : D.rows.length ? `Edited on site: ${D.rows.map((r) => `${r.d > 0 ? 'bought' : 'sold'} ${sh(Math.abs(r.d))} ${r.t}`).join(', ')}` : 'Edited holdings')
+    : D.rows.length ? `Uploaded ${fname}: ${D.rows.map((r) => `${r.d > 0 ? 'bought' : 'sold'} ${sh(Math.abs(r.d))} ${r.t}`).join(', ')}` : `Uploaded ${fname}`;
   const cancel = () => { closeModal(); S.pendingUpload = null; };
   $('#trClose', b).onclick = cancel; $('#trCancel', b).onclick = cancel;
-  $('#trLocal', b).onclick = () => { closeModal(); useLocal(next); };
-  $('#trPublish', b).onclick = () => confirmPublish(next, note.slice(0, 300));
+  $('#trLocal', b).onclick = () => { closeModal(); useLocal(next); parsed.after && parsed.after(); };
+  $('#trPublish', b).onclick = () => confirmPublish(next, note.slice(0, 300), parsed.after);
 }
 function useLocal(p) {
   const c = cleanPortfolio(p);
@@ -2368,7 +2570,7 @@ function show(view) {
 }
 function refreshAll(resetDraft) {
   recalc();
-  if (resetDraft) S.draft = null;
+  if (resetDraft) { S.draft = null; S.draftLog = []; }
   renderStatus();
   renderTape();
   renderers[S.view]();
@@ -2460,9 +2662,9 @@ $('#fileIn').addEventListener('change', (e) => e.target.files[0] && handleFile(e
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0]));
-$('#addRow').addEventListener('click', () => { S.draft.holdings.unshift({ ticker: '', name: '', assetClass: 'Equity', sector: '', industry: '', quantity: 0, avgCost: 0, purchaseDate: new Date().toISOString().slice(0, 10) }); renderEditTable(); });
-$('#revertEdits').addEventListener('click', () => { S.draft = null; renderData(); toast('Edits reverted'); });
-$('#editCash').addEventListener('change', (e) => { S.draft.cash = parseFloat(e.target.value) || 0; });
+$('#addRow').addEventListener('click', () => openBuyDialog());
+$('#revertEdits').addEventListener('click', () => { S.draft = null; S.draftLog = []; renderData(); toast('Edits reverted'); });
+$('#editCash').addEventListener('change', (e) => { S.draft.cash = parseFloat(e.target.value) || 0; renderEditTable(); });
 const draftValid = () => {
   const hs = S.draft.holdings;
   if (hs.some((h) => !h.ticker)) { toast('Every row needs a ticker'); return false; }
@@ -2474,7 +2676,7 @@ const draftValid = () => {
   return true;
 };
 $('#useLocal').addEventListener('click', () => draftValid() && useLocal(S.draft));
-$('#publishEdits').addEventListener('click', () => draftValid() && confirmPublish(S.draft, 'Edited holdings', () => { S.draft = null; }));
+$('#publishEdits').addEventListener('click', () => draftValid() && openTradeReview(S.draft, 'Edited holdings', { manual: true, after: () => { S.draft = null; S.draftLog = []; } }));
 $('#loadHistory').addEventListener('click', loadHistory);
 const saveSettings = () => { S.settings.name = $('#setName').value; store.set('settings', { name: S.settings.name }); };
 $('#setName').addEventListener('change', saveSettings);
@@ -3123,3 +3325,14 @@ async function verifyAndRepair(syms) {
   }
   bad.forEach((t) => { if (!RV.all[t]) Q[t].source = 'Estimated from our trade prices'; });
 }
+
+// read-only snapshot of what the site is showing (used by the automated tests)
+window.__smif = () => {
+  const c = computePortfolio(S.base, S.live ? S.market : {});
+  return {
+    source: S.source, version: S.base.meta?.version, cash: c.cash, total: c.total,
+    rows: c.rows.map((r) => ({ ticker: r.ticker, quantity: +r.quantity, assetClass: r.assetClass, sector: r.sector, value: r.value, weight: r.weight })),
+    rowsQ: Object.fromEntries(S.base.holdings.map((h) => [h.ticker, +h.quantity])),
+    sectors: Object.fromEntries(Object.entries(c.sectors).map(([k, v]) => [k, { value: v.value, wEq: v.wEq }])),
+  };
+};

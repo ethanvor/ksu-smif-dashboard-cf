@@ -1711,6 +1711,10 @@ function openImpactPopup() {
       <div><small>Cash</small><b class="${after.cash < 0 ? 'down' : ''}">${fmt.usd(before.cash)} → ${fmt.usd(after.cash)}</b><div class="sub">${after.cash < 0 ? 'Not enough cash — buys are paid from cash only' : `${fmt.pct(after.cash / after.total, 1)} of the total fund after`}</div></div>
     </div>
     <div class="imp-mix"><span>Equities</span><b>${fmt.pct(before.eqValue / before.total, 1)} → ${fmt.pct(after.eqValue / after.total, 1)}</b><span>of the total fund</span><span class="imp-sep">·</span><span>Stocks</span><b>${fmt.usd(before.eqValue)} → ${fmt.usd(after.eqValue)}</b></div>
+    <div class="row mt" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <h3 style="margin:0">Over / under-weight vs S&amp;P 500 — before &amp; after</h3><span style="font-size:12px;color:var(--muted)">SMIF minus S&amp;P, % of equities, pts</span>
+    </div>
+    <div id="chImpActive" class="imp-chart"></div>
     <div class="row mt" style="justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap">
       <h3 style="margin:0">GICS sector weights</h3>
       <div class="seg sm" id="impBasis"><button data-v="eq" class="on">% of equities</button><button data-v="tot">% of total fund</button></div>
@@ -1729,6 +1733,29 @@ function openImpactPopup() {
   const setBasis = (v) => { $('#impRows', b).innerHTML = rowsFor(v); $('#impBasisNote', b).innerHTML = NOTE[v]; $$('#impBasis button', b).forEach((x) => x.classList.toggle('on', x.dataset.v === v)); };
   $$('#impBasis button', b).forEach((x) => x.addEventListener('click', () => setBasis(x.dataset.v)));
   setBasis('eq');
+  // before/after over-underweight chart (equities basis, same as the Weighting tab)
+  const D = secs.filter((x) => bw[x] != null).map((x) => ({ s: x, b: (before.sectors[x]?.wEq || 0) - bw[x], a: (after.sectors[x]?.wEq || 0) - bw[x] })).sort((p, q) => q.a - p.a);
+  const band = IPS.sectorRebalance, trade = IPS.sectorTrade;
+  const lim = Math.max(band, ...D.flatMap((x) => [Math.abs(x.a), Math.abs(x.b)])) + (isMobile() ? 0.022 : 0.012);
+  requestAnimationFrame(() => setChart('chImpActive', {
+    animation: false,
+    legend: { top: 0, right: 0, itemWidth: 12, itemHeight: 8, textStyle: { color: C.ink2, fontSize: 11 }, data: [{ name: 'Before', itemStyle: { color: C.muted } }, { name: 'After', itemStyle: { color: C.gold } }] },
+    grid: { left: 8, right: 16, top: 46, bottom: 8, containLabel: true },
+    tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: (p) => { const r = D[p[0].dataIndex]; const mv = r.a - r.b; return `<b>${r.s}</b><br>Before: ${fmt.pts(r.b)}<br>After: <b>${fmt.pts(r.a)}</b> (${mv >= 0 ? '+' : ''}${(mv * 100).toFixed(2)} pts)<br><span style="color:${C.muted}">S&P 500 weight ${fmt.pct(bw[r.s], 1)}</span>`; } },
+    xAxis: { type: 'value', min: -lim, max: lim, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, hideOverlap: true, formatter: (v) => (Math.abs(v * 100 - Math.round(v * 100)) < 1e-6 ? (v > 0 ? '+' : '') + Math.round(v * 100) + ' pts' : '') } },
+    yAxis: { type: 'category', inverse: true, data: D.map((x) => x.s), ...axisCommon, splitLine: { show: false }, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: C.ink2, fontSize: isMobile() ? 10 : 12 } },
+    series: [
+      { name: 'Before', type: 'bar', barGap: '15%', barWidth: '32%', data: D.map((x) => ({ value: x.b, itemStyle: { color: C.muted, opacity: 0.45, borderRadius: x.b >= 0 ? [0, 3, 3, 0] : [3, 0, 0, 3] } })), label: { show: false } },
+      { name: 'After', type: 'bar', barWidth: '32%', data: D.map((x) => ({ value: x.a, label: { position: x.a >= 0 ? 'right' : 'left' }, itemStyle: { color: x.a >= 0 ? C.gold : C.blue, borderRadius: x.a >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4], opacity: Math.abs(x.a) > band ? 1 : 0.85 } })),
+        label: { show: true, color: C.ink2, fontSize: isMobile() ? 10 : 11, formatter: (p) => fmt.pts(p.value) },
+        markLine: { silent: true, symbol: 'none', data: [
+          { xAxis: band, lineStyle: { color: C.down, type: 'dashed', opacity: 0.7 }, label: { color: C.muted, fontSize: 10, position: 'start', distance: 4, formatter: '+3 rebalance' } },
+          { xAxis: -band, lineStyle: { color: C.down, type: 'dashed', opacity: 0.7 }, label: { color: C.muted, fontSize: 10, position: 'start', distance: 4, formatter: '−3 rebalance' } },
+          { xAxis: trade, lineStyle: { color: C.muted, type: 'dotted', opacity: 0.6 }, label: { show: false } },
+          { xAxis: -trade, lineStyle: { color: C.muted, type: 'dotted', opacity: 0.6 }, label: { show: false } },
+          { xAxis: 0, lineStyle: { type: 'solid', color: C.muted, opacity: 0.45 }, label: { show: false } }] } },
+    ],
+  }));
 }
 
 function mkTrade(t) {
